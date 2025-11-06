@@ -14,6 +14,9 @@ export interface SerializedBtn {
  * Интерфейс для любой клавиатуры
  */
 export interface KeyboardInterface {
+    _row: number;
+    _keyboard: SerializedBtn[][];
+    Row: () => KeyboardInterface;
     Build(): SerializedBtn[][];
 }
 
@@ -21,9 +24,9 @@ export interface KeyboardInterface {
  * Начинает новый ряд
  * @param [buttons] Массив кнопок (опционально)
  */
-function Row() {
-    /*if(this._row !== 0 || this._keyboard[0].length) */this._row += 1;
-    this._keyboard[this._row] = /*buttons || */[];
+function Row(this: KeyboardInterface) {
+    this._row += 1;
+    this._keyboard[this._row] = [] as SerializedBtn[];
     return this;
 }
 

@@ -1,6 +1,6 @@
 import { KeyboardInterface, SerializedBtn } from './keyboard'
 import { INSTANCES, BOT_IDS } from './store'
-import { OptionsError, NamelessCallback, CallbackOverride } from './errors'
+import { OptionsError, ParserError, NamelessCallback, CallbackOverride } from './errors'
 import { createHash } from "crypto";
 
 export interface BotOptions {
@@ -85,18 +85,28 @@ class CallbackManager {
 }
 
 class MessageSender {
+    parseMode: string | null = null;
+    
     /*
      * Отправка сообщения
      * @param {number} chatId ID чата
      * @param {string} text Текст для отправки
      * @param {MessageOpts} [options] Параметры сообщения
+     * @throws {ParserError} При некорректных тегах разметки
      */
-    async sendMessage(chatId: number, text: string, options?: MessageOpts) {
+    async sendMessage(chatId: number, text: string, options?: MessageOpts | KeyboardInterface) {
         const body: any = { chat_id: chatId, text };
         
-        if (options?.keyboard) {
-            body.reply_markup = (this as any).getKeyboardMarkup(options.keyboard);
+        if (options) {
+            if ("Build" in options) {
+                body.reply_markup = (this as any).getKeyboardMarkup(options.Build());
+            }
+            else if ("keyboard" in options) {
+                body.reply_markup = (this as any).getKeyboardMarkup(options.keyboard);
+            }
         }
+        
+        if (this.parseMode) body.parse_mode = this.parseMode;
         
         const res = await fetch(`${(this as any).apiUrl}/sendMessage`, {
             method: "POST",
@@ -104,7 +114,23 @@ class MessageSender {
             body: JSON.stringify(body),
         });
         
-        return res.json();
+        const parsed = await res.json();
+        
+        if (parsed.ok === false) {
+            if (parsed.description.slice(13, 33) === "can't parse entities") {
+                const err = new ParserError(parsed.description.slice(35));
+                if ((this as any).shouldThrow(err)) throw err;
+            }
+        }
+        
+        return parsed;
+    }
+    
+    /*
+     * Редактирование сообщения
+     */ 
+    async editMessage(chatId: number, messageId: number, options?: string | MessageOpts | KeyboardInterface) {
+        
     }
 
     protected async answerCallbackQuery(id: string, text: string) {
@@ -118,6 +144,32 @@ class MessageSender {
     protected async reply(ctx: any, text: string, options?: MessageOpts) {
         const chat_id = ctx.message?.chat?.id || ctx.from.id;
         return this.sendMessage(chat_id, text, options);
+    }
+}
+
+class ParseModeManager {
+    /*
+     * Парсер сообщений
+     * @param {string} name Название парсера (HTML, MarkdownV2, Markdown или null)
+     */ 
+    setParser(name: string | null) {
+        (this as any).parseMode = name;
+    }
+}
+
+class ErrorManager {
+    exception: (new (...args: any[]) => Error)[] = [];
+    
+    /*
+     * Не вызывать исключение
+     * @param {Error[]} errors Список исключений
+     */
+    dontThrow(...errors: (new (...args: any[]) => Error)[]) {
+        errors.forEach(e => this.exception.push(e));
+    }
+
+    shouldThrow(err: Error) {
+        return !this.exception.some(ex => err instanceof ex);
     }
 }
 
@@ -224,6 +276,8 @@ interface TelegramBotBase
         CallbackManager,
         KeyboardManager,
         MessageSender,
+        ParseModeManager,
+        ErrorManager,
         HandlerManager,
         CallbackSigner,
         Polling {}
@@ -233,6 +287,8 @@ applyMixins(TelegramBotBase, [
     CallbackManager,
     KeyboardManager,
     MessageSender,
+    ParseModeManager,
+    ErrorManager,
     HandlerManager,
     CallbackSigner,
     Polling,
@@ -244,6 +300,8 @@ export class TelegramBot extends TelegramBotBase {
     textHandlers: any[] = [];
     allow_override = false;
     mode = 0;
+    parseMode: string | null = null;
+    exception: (new (...args: any[]) => Error)[] = [];
     signCallbacks = true;
     signLength = 4;
 

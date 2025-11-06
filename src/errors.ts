@@ -37,3 +37,13 @@ export class OptionsError extends Error {
         this.name = "OptionsError";
     }
 }
+
+/*
+ * Ошибка парсинга сообщения
+ */
+export class ParserError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = "ParserError";
+    }
+}
