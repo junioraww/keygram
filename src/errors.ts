@@ -1,5 +1,5 @@
 /*
- * Ошибка вызывается когда не инициализирован бот
+ * Bot not initialized
  */
 export class NoBotSelected extends Error {
     constructor(message: string) {
@@ -9,7 +9,7 @@ export class NoBotSelected extends Error {
 }
 
 /*
- * Ошибка когда передана функция без названия не в режиме StoreCallbacks
+ * Passing an unnamed function not in StoreCallbacks mode
  */
 export class NamelessCallback extends Error {
     constructor(message: string) {
@@ -19,7 +19,17 @@ export class NamelessCallback extends Error {
 }
 
 /*
- * Ошибка когда передана функция с уже занятым названием
+ * Callback is not initialized
+ */
+export class CallbackNotFound extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = "CallbackNotFound";
+    }
+}
+
+/*
+ * Passing a function whose name is already taken
  */
 export class CallbackOverride extends Error {
     constructor(message: string) {
@@ -29,7 +39,7 @@ export class CallbackOverride extends Error {
 }
 
 /*
- * Ошибка параметров бота
+ * Wrong bot options
  */
 export class OptionsError extends Error {
     constructor(message: string) {
@@ -49,7 +59,7 @@ export class ParserError extends Error {
 }
 
 /*
- * Ошибка парсинга сообщения
+ * Wrong message tags
  */
 export class FileNotFound extends Error {
     constructor(message: string) {

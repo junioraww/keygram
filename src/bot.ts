@@ -1,7 +1,8 @@
 import { KeyboardInterface, SerializedBtn } from './keyboard'
 import { INSTANCES, BOT_IDS } from './store'
-import { OptionsError, ParserError, NamelessCallback, CallbackOverride, FileNotFound } from './errors'
-import { createHash } from "crypto";
+import { NoBotSelected, NamelessCallback, CallbackNotFound, CallbackOverride, OptionsError,
+         ParserError, FileNotFound } from './errors'
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
 export interface BotOptions {
@@ -22,6 +23,9 @@ export interface MessageOpts {
 export interface File {
     photo?: string;
     audio?: string;
+    document?: string;
+    animation?: string;
+    voice?: string;
 }
 
 export function Image(path: string): MessageOpts {
@@ -63,30 +67,38 @@ class CallbackManager {
     callbacks!: Record<string, Function>;
     allow_override = false;
     mode = 0;
-    
+    started = false;
+
     /*
-     * Регистрация функции для колбека
-     * @param {Function[]} ...fs Регистрируемые именные функции
+     * Register function as a callback
+     * @param {Function[]} ...fs Registering functions
      */
     register(...fs: Function[]) {
         for (const func of fs) {
-            if (this.mode !== 1 && func.name === "anon")
-                throw new NamelessCallback("В режиме NamedCallbacks запрещены безымянные функции");
+            if (this.started && func.name === "anon")
+                throw new NamelessCallback("Can't create callbacks after starting the bot (unsafe for reloads)");
 
             if (!this.allow_override && this.callbacks[func.name])
-                throw new CallbackOverride("В режиме allow_override = false запрещено переназначать callbacks");
+                throw new CallbackOverride("Callback with name " + func.name + " already registered!");
             
             this.callbacks[func.name] = func;
         }
     }
-    
+
     hasCallback(func: Function) {
-        return this.callbacks[func.name] !== undefined;
+        return !!this.callbacks[func.name];
     }
 
     protected async handleCallback(ctx: any, name: string, args: any[]) {
+        if (!this.callbacks[name]) {
+            const err = new CallbackNotFound("Callback function wasn't registered. Function name: " + name 
+                                           + "\nPossible cause: Keyboard() was created with Callback() outside the main script");
+            if ((this as any).shouldThrow(err)) throw err;
+            return false;
+        }
+        
         const fixedArgs: any[] = [];
-
+        
         for (const arg of args) {
             if (arg === 'false') fixedArgs.push(false);
             else if (arg === 'true') fixedArgs.push(true);
@@ -106,15 +118,13 @@ class MessageSender {
     parseMode: string | null = null;
     
     /*
-     * Отправка сообщения
-     * @param {number} chatId ID чата
-     * @param {string} text Текст для отправки
-     * @param {MessageOpts} [options] Параметры сообщения
-     * @throws {ParserError} При некорректных тегах разметки
+     * Sending a message
+     * @param {number} chatId Chat ID
+     * @param {string} text Text to send
+     * @param {MessageOpts} [options] Message options
+     * @throws {ParserError} Being thrown when there's unclosed tags, etc
      */
     async sendMessage(chatId: number, text: string, options?: MessageOpts | KeyboardInterface) {
-        console.log(text, options)
-        
         if (options && "file" in options && options.file) {
             const body: any = { chat_id: chatId, caption: text };
             
@@ -123,8 +133,6 @@ class MessageSender {
             if (this.parseMode) body.parse_mode = this.parseMode;
             
             const { file } = options;
-            
-            console.log(body);
             
             let res;
             
@@ -135,11 +143,7 @@ class MessageSender {
             if (!data.startsWith(".") && !data.startsWith("/")) {
                 body.photo = data;
                 
-                res = await fetch(`${(this as any).apiUrl}/${method}`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify(body),
-                });
+                res = await this.call(method, body);
             }
             else {
                 const blob = await this.loadBlob(data);
@@ -150,10 +154,7 @@ class MessageSender {
                     else form.append(k, JSON.stringify(body[k]))
                 });
                 form.append(type, blob, "photo.jpg");
-                res = await fetch(`${(this as any).apiUrl}/${method}`, {
-                    method: "POST",
-                    body: form,
-                });
+                res = await this.call(method, form);
             }
             
             return res ? res.json() : null;
@@ -165,11 +166,7 @@ class MessageSender {
             
             if (this.parseMode) body.parse_mode = this.parseMode;
             
-            const res = await fetch(`${(this as any).apiUrl}/sendMessage`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(body),
-            });
+            const res = await this.call("sendMessage", body);
             
             const parsed = await res.json();
             
@@ -202,11 +199,11 @@ class MessageSender {
     }
     
     /*
-     * Парсинг и включение аргументов
+     * Including arguments
      */
     protected includeOptions(body: any, options: MessageOpts | KeyboardInterface) {
         if ("Build" in options) {
-            body.reply_markup = (this as any).getKeyboardMarkup(options.Build());
+            body.reply_markup = (this as any).getKeyboardMarkup(options);
         }
         else if ("keyboard" in options) {
             body.reply_markup = (this as any).getKeyboardMarkup(options.keyboard);
@@ -214,7 +211,7 @@ class MessageSender {
     }
 
     /*
-     * Редактирование сообщения
+     * Message editing
      * @param {number} chatId
      * @param {number} messageId
      * @param {MessageOpts} options
@@ -319,37 +316,87 @@ class MessageSender {
         }
     }
     
-    protected async identifyEdit(ctx: any, argument: string | MessageOpts) {
+    /*
+     * Reacting to message
+     */
+    async react(chatId: number, messageId: number, reaction: string, big?: boolean) {
+        const body = {
+            chat_id: chatId,
+            message_id: messageId,
+            reaction: [{ type: "emoji", emoji: reaction }],
+            ...(big ? { is_big: true } : {})
+        }
+        return this.call("setMessageReaction", body);
+    }
+    
+    /*
+     * Calling any Telegram Bot API functions
+     * @param {string} method
+     * @param {FormData | any} arguments Data to be send
+     */
+    async call(method: string, data: FormData | any) {
+        if (data instanceof FormData) {
+            return await fetch(`${(this as any).apiUrl}/${method}`, {
+                method: "POST",
+                body: data,
+            });
+        } else {
+            return await fetch(`${(this as any).apiUrl}/${method}`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(data),
+            });
+        }
+    }
+    
+    /*
+     * Internal functions to handle different variants of arguments
+     * And also to use the same argument for caption and text
+     */
+    protected async identifyEdit(ctx: any, argument1: string | MessageOpts | KeyboardInterface,
+                                           argument2?: MessageOpts | KeyboardInterface) {
         if (!ctx.message?.chat?.id) throw new Error("Can't edit outside callback context")
         const chat_id = ctx.message?.chat?.id;
-        console.log('Context', ctx)
-        if (typeof argument === 'string') {
+        
+        if (typeof argument1 === 'string') {
+            const body: any = "Build" in (argument2 || {}) ? { keyboard: argument2 } : argument2 || {};
+            
             if (!ctx.message.text) {
                 return this.editMessage(chat_id, ctx.message.message_id, {
-                    caption: argument
+                    ...body,
+                    caption: argument1
                 })
             }
             else {
                 return this.editMessage(chat_id, ctx.message.message_id, {
-                    text: argument
+                    ...body,
+                    text: argument1
                 })
             }
         }
         else {
+            const body: any = "Build" in argument1 ? { keyboard: argument1 } : argument1;
+            
             if (!ctx.message.text) {
-                console.log('PHOTO!')
                 return this.editMessage(chat_id, ctx.message.message_id, {
-                    ...argument,
-                    caption: argument.text || argument.caption // TODO special message opts - to exclude caption
+                    ...body,
+                    caption: body.text || body.caption // TODO separate interface for message opts - to exclude caption
                 })
             }
             else {
                 return this.editMessage(chat_id, ctx.message.message_id, {
-                    ...argument,
-                    text: argument.text || argument.caption
+                    ...body,
+                    text: body.text || body.caption
                 })
             }
         }
+    }
+    
+    protected async identifyReply(ctx: any, argument: string | MessageOpts, options: MessageOpts | undefined) {
+        const chat_id = ctx.message?.chat?.id || ctx.from.id;
+        const stringPassed = typeof argument === 'string';
+        if (stringPassed) return this.sendMessage(chat_id, argument, options || {});
+        else if (!stringPassed && argument?.text) return this.sendMessage(chat_id, argument.text, argument);
     }
 
     protected async answerCallbackQuery(id: string, text: string) {
@@ -359,29 +406,26 @@ class MessageSender {
             body: JSON.stringify({ callback_query_id: id, text }),
         });
     }
-    
-    protected async reply(ctx: any, text: string, options?: MessageOpts) {
-        const chat_id = ctx.message?.chat?.id || ctx.from.id;
-        return this.sendMessage(chat_id, text, options);
-    }
 }
+
+type ParserName = 'HTML' | 'MarkdownV2' | 'Markdown' | null;
 
 class ParseModeManager {
     /*
-     * Парсер сообщений
-     * @param {string} name Название парсера (HTML, MarkdownV2, Markdown или null)
+     * Sets message parser
+     * @param {ParserName} name Parser name (HTML, MarkdownV2, Markdown or null)
      */ 
-    setParser(name: string | null) {
+    setParser(name: ParserName) {
         (this as any).parseMode = name;
     }
 }
 
 class ErrorManager {
     exception: (new (...args: any[]) => Error)[] = [];
-    
+
     /*
-     * Не вызывать исключение
-     * @param {Error[]} errors Список исключений
+     * Don't throw exception
+     * @param {...(new (...args: any[]) => Error)} errors List of exceptions
      */
     dontThrow(...errors: (new (...args: any[]) => Error)[]) {
         errors.forEach(e => this.exception.push(e));
@@ -393,13 +437,20 @@ class ErrorManager {
 }
 
 class KeyboardManager {
-    protected serializeKeyboard(keyboard: SerializedBtn[][] | KeyboardInterface) {
-        return Array.isArray(keyboard) ? keyboard.map(row => row.map(btn => ({ text: btn.text, callback_data: btn.data || ' ' })))
-                                       : keyboard.Build().map(row => row.map(btn => ({ text: btn.text, callback_data: btn.data || ' ' })));
+    protected serializeKeyboard(keyboard: SerializedBtn[][]) {
+        return keyboard.map(row => row.map(btn => {
+            if (btn.url) return { text: btn.text, url: btn.url }
+            return { text: btn.text, callback_data: btn.data || ' ' }
+        }));
     }
-
-    protected getKeyboardMarkup(keyboard: SerializedBtn[][] | KeyboardInterface) {
-        return { inline_keyboard: this.serializeKeyboard(keyboard) };
+    
+    protected getKeyboardMarkup(keyboard: KeyboardInterface) {
+        if (keyboard._inline) {
+            return { inline_keyboard: this.serializeKeyboard(keyboard.Build()) }
+        }
+        else {
+            return { keyboard: this.serializeKeyboard(keyboard.Build()) }
+        }
     }
 }
 
@@ -417,16 +468,68 @@ class CallbackSigner {
     }
 }
 
+const allowedHandlers = new Set([
+    'quote', 'reply_to_story', 'reply_to_checklist_task_id', 'text',
+    'animation', 'audio', 'document', 'paid_media', 'photo', 'sticker',
+    'story', 'video', 'video_note', 'voice', 'caption', 'checklist',
+    'contact', 'dice', 'game', 'poll', 'venue', 'location',
+    'new_chat_members', 'left_chat_member', 'new_chat_title', 'new_chat_photo',
+    'delete_chat_photo', 'group_chat_created', 'supergroup_chat_created',
+    'channel_chat_created', 'message_auto_delete_timer_changed', 'migrate_to_chat_id',
+    'migrate_from_chat_id', 'pinned_message', 'invoice', 'successful_payment',
+    'refunded_payment', 'users_shared', 'chat_shared', 'gift', 'unique_gift',
+    'connected_website', 'write_access_allowed', 'passport_data',
+    'proximity_alert_triggered', 'boost_added', 'chat_background_set',
+    'checklist_tasks_done', // add rest
+])
+
+interface Handler {
+    action: string | undefined;
+    requires?: any;
+    func: Function;
+}
+
 class HandlerManager {
-    textHandlers!: any[];
+    handlers: Handler[] = [];
+    addedHandlers: Set<string | undefined> = new Set();
     
     on(match: string | RegExp, func: Function) {
-        const regex = typeof match === 'string' ? new RegExp(match) : match;
-        
-        this.textHandlers.push({
-            regex,
+        if (typeof match !== 'string') {
+            this.addHandler('text', func, match);
+        }
+        else {
+            if (match === 'callback') this.addHandler('callback_query', func)
+            else if (allowedHandlers.has(match)) this.addHandler(match, func)
+            else this.addHandler('text', func, new RegExp(match))
+        }
+    }
+    
+    use(func: Function) {
+        this.handlers.push({
+            action: undefined,
             func
         })
+        this.addedHandlers.add(undefined)
+    }
+    
+    protected addHandler(action: string, func: Function, requires?: any) {
+        this.handlers.push({
+            action,
+            requires,
+            func
+        })
+        this.addedHandlers.add(action)
+    }
+    
+    protected async handle(context: Context, name: string) {
+        if (!this.addedHandlers.has(name)) return false;
+        for (const handler of this.handlers) {
+            if (handler.action !== name) continue;
+            if (handler.action === "text" && !handler.requires.test(context.text)) continue;
+            const result = await handler.func(context);
+            if (!!result) return true;
+        }
+        return false;
     }
 }
 
@@ -436,7 +539,14 @@ function tinySig(text: string, signLength: number): string {
 }
 
 class Polling extends CallbackManager {
+    started = false;
+    handlers: Handler[] = [];
+    onUpdate: (msg: any) => void = () => {};
+    addedHandlers: Set<string | undefined> = new Set();
+    
     protected async startPolling(onUpdate: (msg: any) => void) { // eslint-disable-line no-unused-vars
+        this.started = true;
+        this.onUpdate = onUpdate;
         let offset = 0;
         while (true) {
             const res = await fetch(`${(this as any).apiUrl}/getUpdates?offset=${offset}&timeout=30`);
@@ -444,52 +554,79 @@ class Polling extends CallbackManager {
             if (!data.result?.length) continue;
 
             for (const update of data.result) {
-                if (update.callback_query) {
-                    const { id, data } = update.callback_query;
-                    
-                    if (!data) continue;
-                    const args = data.split(' ');
-
-                    if ((this as any).signCallbacks) {
-                        
-                        const sigIndex = data.indexOf(' ');
-                        if ((this as any).sig(data.slice(sigIndex + 1)) !== data.slice(0, sigIndex)) {
-                            console.warn("Wrong signature");
-                        }
-                        else this.handleCallback((this as any).Context(update), args[1], args.slice(2));
-                    } else {
-                        
-                        this.handleCallback((this as any).Context(update), args[0], args.slice(1));
-                    }
-                    (this as any).answerCallbackQuery(id, ' ');
-                } else if (update.message?.text?.length) {
-                    for (const { regex, func } of (this as any).textHandlers) {
-                        console.log(regex, update.message.text);
-                        if (regex.test(update.message.text)) {
-                            func((this as any).Context(update));
-                            break;
-                        }
-                    }
-                }
-                
-                if(onUpdate !== undefined) onUpdate(update);
-                
+                const context = (this as any).Context(update);
+                this.processUpdate(context, update);
                 offset = update.update_id + 1;
             }
         }
     }
     
-    private Context(update: any) {
+    protected async processUpdate(context: Context, update: any) {
+        //const stopped = await (this as any).handle(context);
+        // if any middleware returns "true", then chain stops
+        
+        handleMiddleware: {
+            if (update.callback_query) {
+                const stopped = await (this as any).handle(context, 'callback_query')
+                if (stopped) break handleMiddleware;
+                
+                const { id, data } = context;
+                
+                if (data !== ' ') {
+                    const args = data.split(' ');
+                    if ((this as any).signCallbacks === true) {
+                        const sigIndex = data.indexOf(' ');
+                        
+                        if ((this as any).sig(data.slice(sigIndex + 1)) !== data.slice(0, sigIndex)) {
+                            console.warn("Wrong signature");
+                        }
+                        else await this.handleCallback(context, args[1], args.slice(2));
+                    } else {
+                        await this.handleCallback(context, args[0], args.slice(1));
+                    }
+                }
+                
+                (this as any).answerCallbackQuery(id, context._query || ' ');
+            }
+            else {
+                for (const { action, requires, func } of this.handlers) {
+                    if (action && !context[action]) continue;
+                    if (action === "text" && !requires.test(context.text)) continue;
+                    if (!!await func(context)) break;
+                }
+            }
+        }
+        
+        if(this.onUpdate !== undefined) await this.onUpdate(update);
+    }
+    
+    private Context(update: any): Context {
         const ctx: any = update.callback_query || update.message;
         if (!ctx) throw new Error("Sorry, unsupported context!" + update);
-        return {
-            ...update.callback_query,
+        
+        const object = {
+            ...ctx,
             reply: (argument: string | MessageOpts, options?: MessageOpts) =>
-                (this as any).reply(ctx, typeof argument === 'string' ? argument : argument.text, options || argument),
-            edit: (argument: string | MessageOpts) =>
-                (this as any).identifyEdit(ctx, argument),
+                (this as any).identifyReply(ctx, argument, options),
         };
+        
+        if (update.callback_query) {
+            object.edit = (argument1: string | MessageOpts | KeyboardInterface,
+                           argument2?: MessageOpts | KeyboardInterface) => (this as any).identifyEdit(ctx, argument1, argument2);
+        }
+        else {
+            object.react = (emoji: string, big?: boolean) => (this as any).react(ctx.chat.id, ctx.message_id, emoji, big);
+        }
+        
+        return object;
     }
+}
+
+interface Context {
+    reply: (argument: string | MessageOpts, options?: MessageOpts) => any;
+    edit: (argument: string | MessageOpts) => any;
+    query: string | undefined;
+    [key: string]: any;
 }
 
 class TelegramBotBase {}
@@ -520,13 +657,15 @@ applyMixins(TelegramBotBase, [
 
 export class TelegramBot extends TelegramBotBase {
     callbacks: Record<string, Function> = {};
-    textHandlers: any[] = [];
+    handlers: Handler[] = [];
+    addedHandlers: Set<string | undefined> = new Set();
     allow_override = false;
     mode = 0;
     parseMode: string | null = null;
     exception: (new (...args: any[]) => Error)[] = [];
     signCallbacks = true;
     signLength = 4;
+    started = false;
 
     constructor(options: BotOptions | string) {
         super();
@@ -540,7 +679,7 @@ export class TelegramBot extends TelegramBotBase {
             if (options.signLength !== undefined) this.signLength = options.signLength;
         }
 
-        if (!token) throw new OptionsError("Не указан токен");
+        if (!token) throw new OptionsError("Wrong token");
 
         (this as any).initBot(token);
     }

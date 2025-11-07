@@ -1,20 +1,31 @@
 {
   "name": "keygram",
-  "version": "0.2.0",
-  "type": "module",
+  "version": "0.2.3",
+  "author": "JuniorAww",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/JuniorAww/keygram.git"
+  },
+  "main": "dist/index.js",
+  "devDependencies": {
+    "@types/bun": "^1.3.1",
+    "eslint": "^9.38.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.46.3"
+  },
+  "keywords": [
+    "telegram",
+    "bot",
+    "bot framework",
+    "telegram bot",
+    "telegram bot api"
+  ],
+  "license": "MIT",
   "scripts": {
     "build": "tsc",
     "lint": "eslint src --ext .ts",
     "format": "prettier --write ."
   },
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
-  "devDependencies": {
-    "@types/bun": "^1.3.1",
-    "eslint": "^9.38.0",
-    "typescript": "^5.9.3"
-  },
-  "dependencies": {
-    "typescript-eslint": "^8.46.2"
-  }
+  "type": "module",
+  "types": "dist/index.d.ts"
 }
