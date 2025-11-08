@@ -88,6 +88,13 @@ class CallbackManager {
     hasCallback(func: Function) {
         return !!this.callbacks[func.name];
     }
+    
+    /*
+     * Set answer text in callback
+     */
+    answer(ctx: any, text: string) {
+        ctx._query = text;
+    }
 
     protected async handleCallback(ctx: any, name: string, args: any[]) {
         if (!this.callbacks[name]) {
@@ -109,7 +116,7 @@ class CallbackManager {
             else if (!isNaN(Number(arg))) fixedArgs.push(Number(arg));
             else fixedArgs.push(arg);
         }
-
+        
         this.callbacks[name](ctx, ...fixedArgs);
     }
 }
@@ -281,6 +288,13 @@ class MessageSender {
                 
                 const parsed = await res.json();
                 
+                if (parsed.ok === false) {
+                    console.error(parsed.description.slice(13));
+                    if (parsed.description.slice(13) === 'inline keyboard expected') {
+                        
+                    }
+                }
+                
                 return parsed;
             }
         }
@@ -393,7 +407,7 @@ class MessageSender {
     }
     
     protected async identifyReply(ctx: any, argument: string | MessageOpts, options: MessageOpts | undefined) {
-        const chat_id = ctx.message?.chat?.id || ctx.from.id;
+        const chat_id = ctx.message?.chat?.id || ctx.chat.id;
         const stringPassed = typeof argument === 'string';
         if (stringPassed) return this.sendMessage(chat_id, argument, options || {});
         else if (!stringPassed && argument?.text) return this.sendMessage(chat_id, argument.text, argument);
@@ -468,11 +482,23 @@ class CallbackSigner {
     }
 }
 
-const allowedHandlers = new Set([
+// Updates that can be received
+const updateHandlers = new Set([
+    "message", "edited_message", "channel_post", "edited_channel_post",
+    "business_connection", "business_message", "edited_business_message",
+    "deleted_business_messages", "message_reaction", "message_reaction_count",
+    "inline_query", "chosen_inline_result", "callback_query", "shipping_query",
+    "pre_checkout_query", "purchased_paid_media", "poll", "poll_answer",
+    "my_chat_member", "chat_member", "chat_join_request", "chat_boost",
+    "removed_chat_boost"
+])
+
+// Handlers to specific keys in message update
+const messageHandlers = new Set([
     'quote', 'reply_to_story', 'reply_to_checklist_task_id', 'text',
     'animation', 'audio', 'document', 'paid_media', 'photo', 'sticker',
     'story', 'video', 'video_note', 'voice', 'caption', 'checklist',
-    'contact', 'dice', 'game', 'poll', 'venue', 'location',
+    'contact', 'dice', 'game', /*'poll',*/ 'venue', 'location',
     'new_chat_members', 'left_chat_member', 'new_chat_title', 'new_chat_photo',
     'delete_chat_photo', 'group_chat_created', 'supergroup_chat_created',
     'channel_chat_created', 'message_auto_delete_timer_changed', 'migrate_to_chat_id',
@@ -480,12 +506,21 @@ const allowedHandlers = new Set([
     'refunded_payment', 'users_shared', 'chat_shared', 'gift', 'unique_gift',
     'connected_website', 'write_access_allowed', 'passport_data',
     'proximity_alert_triggered', 'boost_added', 'chat_background_set',
-    'checklist_tasks_done', // add rest
+    'checklist_tasks_done', 'checklist_tasks_added', 'direct_message_price_changed',
+    'forum_topic_created', 'forum_topic_edited', 'forum_topic_closed', 'forum_topic_reopened',
+    'general_forum_topic_hidden', 'general_forum_topic_unhidden', 'giveaway_created',
+    'giveaway', 'giveaway_winners', 'giveaway_completed', 'paid_message_price_changed',
+    'suggested_post_approved', 'suggested_post_approval_failed', 'suggested_post_declined',
+    'suggested_post_paid', 'suggested_post_refunded', 'video_chat_scheduled',
+    'video_chat_started', 'video_chat_ended', 'video_chat_participants_invited', 'web_app_data'
 ])
 
+const allowedHandlers = new Set([ ...updateHandlers/*, ...messageHandlers*/ ])
+
 interface Handler {
-    action: string | undefined;
-    requires?: any;
+    update: string | undefined;
+    key?: string; // key to be checked
+    value?: any; // key value to be compared
     func: Function;
 }
 
@@ -493,43 +528,103 @@ class HandlerManager {
     handlers: Handler[] = [];
     addedHandlers: Set<string | undefined> = new Set();
     
+    /*
+     * MAY BE UNSAFE!
+     * Adds handler differently
+     * 1) If match is an update name, then handler will subscribe only for this update
+     * 2) You can specify required key near the update name, e.g "edited-message:poll" will handle only edits with polls
+     * 3) You can just specify message key name, for example "video", but be aware! Polls won't work (use "message:poll")
+     * 3) If no [allowed in current version of library] update name found, then match will be used as text RegExp
+     * @param {string} match Required update name, or update name with required key, or text to be found
+     * @param {Function} func
+     */
     on(match: string | RegExp, func: Function) {
         if (typeof match !== 'string') {
-            this.addHandler('text', func, match);
+            this.addHandler('message', func, 'text', match);
         }
         else {
-            if (match === 'callback') this.addHandler('callback_query', func)
-            else if (allowedHandlers.has(match)) this.addHandler(match, func)
-            else this.addHandler('text', func, new RegExp(match))
+            const _match = match.replace(/-/g,'_');
+            if (_match === 'callback') this.addHandler('callback_query', func);
+            else if (allowedHandlers.has(_match)) this.addHandler(_match, func);
+            else if (_match.includes(':') && allowedHandlers.has(_match.slice(0, _match.indexOf(':')))) {
+                const [ updateName, requiredKey ] = _match.split(':');
+                this.addHandler(updateName, func, requiredKey); // message-text, message-poll
+            }
+            else if (messageHandlers.has(_match)) this.addHandler('message', func, _match.replace(/-/g,'_')); // video, new_chat_members
+            else this.addHandler('message', func, 'text', getSafeRE(match, false)); // /start, anytext
         }
     }
     
+    /*
+     * SAFE!
+     * Adds update handler (optional to specify required key with ':key')
+     * Can be like: "message", "message:text", "message:poll", "chat-boost", "poll-answer:user"
+     */
+    onUpdate(update: string, func: Function) {
+        const _update = update.replace(/-/g,'_');
+        if (_update.includes(':')) {
+            const [ updateName, requiredKey ] = _update.split(':')
+            this.addHandler(cutCbName(_update), func, requiredKey.replace(/-/g,'_'))
+        }
+        else this.addHandler(cutCbName(_update), func)
+    }
+    
+    text(text: string | RegExp, func: Function) {
+        if (typeof text !== 'string') 
+            this.addHandler('message', func, 'text', text);
+        else 
+            this.addHandler('message', func, 'text', getSafeRE(text));
+        this.addedHandlers.add('message')
+    }
+    
+    /*
+     * Just middleware. No checks applied
+     */
     use(func: Function) {
         this.handlers.push({
-            action: undefined,
+            update: undefined,
             func
         })
         this.addedHandlers.add(undefined)
     }
     
-    protected addHandler(action: string, func: Function, requires?: any) {
+    protected addHandler(update: string, func: Function, key?: string, value?: any) {
+        console.log('adding', key, value)
         this.handlers.push({
-            action,
-            requires,
+            update,
+            ...(key ? { key } : {}),
+            ...(value ? { value } : {}),
             func
         })
-        this.addedHandlers.add(action)
+        this.addedHandlers.add(update)
     }
     
     protected async handle(context: Context, name: string) {
         if (!this.addedHandlers.has(name)) return false;
         for (const handler of this.handlers) {
-            if (handler.action !== name) continue;
-            if (handler.action === "text" && !handler.requires.test(context.text)) continue;
-            const result = await handler.func(context);
-            if (!!result) return true;
+            if (handler.update !== name) continue;
+            if (handler.update) {
+                if (handler.key === "text" && !handler.value.test(context.text)) continue;
+                else if (handler.key !== undefined) {
+                    if (handler.value !== undefined && context[handler.key] !== handler.value) continue;
+                    else if (context[handler.value] === undefined) continue;
+                }
+            }
+            if (!!await handler.func(context)) return true;
         }
         return false;
+    }
+    
+    /*
+     * Returns all registered middlewares/handlers in their execution order
+     * Nameless functions shown as '$'
+     */
+    print() {
+        return this.handlers.map((h: Handler) => ({
+            update: h.update || 'any',
+            ...(h.key && (()=>{let o:any={};o[h.key]=h.value||'any';return o})()),
+            function: h.func.name === "" ? "$" : h.func.name,
+        }));
     }
 }
 
@@ -538,15 +633,24 @@ function tinySig(text: string, signLength: number): string {
     return hash.toString("base64").substring(0, signLength);
 }
 
+function cutCbName(update: string) {
+    return update === 'callback' ? 'callback_query' : update;
+}
+
+function getSafeRE(str: string, ends: boolean = true) {
+    return new RegExp(`^${str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}${ends ? '$' : ''}`);
+}
+
 class Polling extends CallbackManager {
     started = false;
     handlers: Handler[] = [];
-    onUpdate: (msg: any) => void = () => {};
+    scriptOnUpdate: (msg: any) => void = () => {};
     addedHandlers: Set<string | undefined> = new Set();
+    signLength = 5;
     
-    protected async startPolling(onUpdate: (msg: any) => void) { // eslint-disable-line no-unused-vars
+    async startPolling(onUpdate: (msg: any) => void) { // eslint-disable-line no-unused-vars
         this.started = true;
-        this.onUpdate = onUpdate;
+        this.scriptOnUpdate = onUpdate;
         let offset = 0;
         while (true) {
             const res = await fetch(`${(this as any).apiUrl}/getUpdates?offset=${offset}&timeout=30`);
@@ -555,16 +659,14 @@ class Polling extends CallbackManager {
 
             for (const update of data.result) {
                 const context = (this as any).Context(update);
-                this.processUpdate(context, update);
+                if (context) this.processUpdate(context, update);
+                else console.error("Unsupported context", context)
                 offset = update.update_id + 1;
             }
         }
     }
     
     protected async processUpdate(context: Context, update: any) {
-        //const stopped = await (this as any).handle(context);
-        // if any middleware returns "true", then chain stops
-        
         handleMiddleware: {
             if (update.callback_query) {
                 const stopped = await (this as any).handle(context, 'callback_query')
@@ -575,9 +677,7 @@ class Polling extends CallbackManager {
                 if (data !== ' ') {
                     const args = data.split(' ');
                     if ((this as any).signCallbacks === true) {
-                        const sigIndex = data.indexOf(' ');
-                        
-                        if ((this as any).sig(data.slice(sigIndex + 1)) !== data.slice(0, sigIndex)) {
+                        if ((this as any).sig(data.slice(this.signLength + 1)) !== data.slice(0, this.signLength)) {
                             console.warn("Wrong signature");
                         }
                         else await this.handleCallback(context, args[1], args.slice(2));
@@ -589,45 +689,79 @@ class Polling extends CallbackManager {
                 (this as any).answerCallbackQuery(id, context._query || ' ');
             }
             else {
-                for (const { action, requires, func } of this.handlers) {
-                    if (action && !context[action]) continue;
-                    if (action === "text" && !requires.test(context.text)) continue;
-                    if (!!await func(context)) break;
+                for (const handler of this.handlers) {
+                    if (handler.update) {
+                        if (!update[handler.update]) continue;
+                        else if (handler.key !== undefined) {
+                            if (handler.value !== undefined) {
+                                if (handler.key === "text") {
+                                    if (!handler.value.test(context.text)) continue;
+                                }
+                                else if (context[handler.key] !== handler.value) continue;
+                            }
+                            else if (context[handler.value] === undefined) continue;
+                        }
+                    }
+                    if (!!await handler.func(context)) break; // if handler returns anything - stop
                 }
             }
         }
         
-        if(this.onUpdate !== undefined) await this.onUpdate(update);
+        if(this.scriptOnUpdate !== undefined) await this.scriptOnUpdate(update);
     }
     
-    private Context(update: any): Context {
-        const ctx: any = update.callback_query || update.message;
-        if (!ctx) throw new Error("Sorry, unsupported context!" + update);
+    private Context(update: any): Context | null {
+        const [ctx, eventName]: any = extract(update);
+        if (!ctx) return null;
+
+        const isCallbackQuery = !!update.callback_query;
         
-        const object = {
-            ...ctx,
-            reply: (argument: string | MessageOpts, options?: MessageOpts) =>
-                (this as any).identifyReply(ctx, argument, options),
-        };
-        
-        if (update.callback_query) {
-            object.edit = (argument1: string | MessageOpts | KeyboardInterface,
-                           argument2?: MessageOpts | KeyboardInterface) => (this as any).identifyEdit(ctx, argument1, argument2);
-        }
-        else {
-            object.react = (emoji: string, big?: boolean) => (this as any).react(ctx.chat.id, ctx.message_id, emoji, big);
-        }
-        
-        return object;
+        return new Context(ctx, eventName, this, isCallbackQuery);
     }
 }
 
-interface Context {
-    reply: (argument: string | MessageOpts, options?: MessageOpts) => any;
-    edit: (argument: string | MessageOpts) => any;
-    query: string | undefined;
-    [key: string]: any;
+function extract(update: any): any {
+    return [ Object.values(update)[1], Object.keys(update)[1] ];
 }
+
+export class Context {
+    public event: string;
+    public data: string = ""; // /start
+    public reply: (argument: string | MessageOpts, options?: MessageOpts) => any;
+    public edit?: (argument1: string | MessageOpts | KeyboardInterface, argument2?: MessageOpts | KeyboardInterface) => any;
+    public query?: (text: string) => any;
+    public react?: (emoji: string, big?: boolean) => any;
+    [key: string]: any;
+    
+    constructor(ctx: any, eventName: string, service: any, isCallbackQuery: boolean) {
+        this.event = eventName;
+        Object.assign(this, ctx);
+        
+        this.reply = (argument: string | MessageOpts, options?: MessageOpts) =>
+            service.identifyReply(ctx, argument, options);
+        
+        if (isCallbackQuery) {
+            this.edit = (
+                argument1: string | MessageOpts | KeyboardInterface,
+                argument2?: MessageOpts | KeyboardInterface
+            ) => service.identifyEdit(ctx, argument1, argument2);
+            
+            this.query = (text: string) => service.query(ctx, text);
+        } else {
+            this.react = (emoji: string, big?: boolean) =>
+                service.react(ctx.chat.id, ctx.message_id, emoji, big);
+            if (this.text && this.text.startsWith('/start')) {
+                this.data = this.text.slice(7);
+            }
+        }
+    }
+    
+    get isChat(): boolean {
+        return !!this.chat;
+    }
+}
+
+
 
 class TelegramBotBase {}
 

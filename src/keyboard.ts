@@ -49,13 +49,20 @@ function Url(this: any, text: string, url: string) {
 /*
  * Action button
  * @param text
- * @param action Function with name (not anon)
+ * @param {Function | name} action Function with name OR function name (if it's being registered)
  * @param [args] Arguments (optional)
  */
-function Callback(this: any, text: string, action: Function, ...args: any[] | undefined[]) {
-    if (!this._bot.hasCallback(action)) this._bot.register(action);
+function Callback(this: any, text: string, action: Function | string, ...args: any[] | undefined[]) {
+    let unsigned;
+    const strArgs = (args?.length ? (' ' + args?.join(' ')) : ''); // stringified args
     
-    const unsigned = action.name + (args?.length ? (' ' + args?.join(' ')) : '');
+    if (typeof action !== 'string') {
+        if (!this._bot.hasCallback(action)) this._bot.register(action);
+        unsigned = action.name + strArgs;
+    }
+    else {
+        unsigned = action + strArgs;
+    }
     
     const data = this._bot.requireSig() ? (this._bot.sig(unsigned) + ' ' + unsigned) : unsigned;
     
