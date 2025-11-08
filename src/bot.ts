@@ -88,19 +88,13 @@ class CallbackManager {
     hasCallback(func: Function) {
         return !!this.callbacks[func.name];
     }
-    
-    /*
-     * Set answer text in callback
-     */
-    answer(ctx: any, text: string) {
-        ctx._query = text;
-    }
 
     protected async handleCallback(ctx: any, name: string, args: any[]) {
         if (!this.callbacks[name]) {
             const err = new CallbackNotFound("Callback function wasn't registered. Function name: " + name 
                                            + "\nPossible cause: Keyboard() was created with Callback() outside the main script");
-            if ((this as any).shouldThrow(err)) throw err;
+            //if ((this as any).shouldThrow(err)) throw err;
+            console.error(err)
             return false;
         }
         
@@ -117,7 +111,7 @@ class CallbackManager {
             else fixedArgs.push(arg);
         }
         
-        this.callbacks[name](ctx, ...fixedArgs);
+        return this.callbacks[name](ctx, ...fixedArgs);
     }
 }
 
@@ -150,7 +144,7 @@ class MessageSender {
             if (!data.startsWith(".") && !data.startsWith("/")) {
                 body.photo = data;
                 
-                res = await this.call(method, body);
+                return await this.call(method, body);
             }
             else {
                 const blob = await this.loadBlob(data);
@@ -161,10 +155,8 @@ class MessageSender {
                     else form.append(k, JSON.stringify(body[k]))
                 });
                 form.append(type, blob, "photo.jpg");
-                res = await this.call(method, form);
+                return await this.call(method, form);
             }
-            
-            return res ? res.json() : null;
         }
         else {
             const body: any = { chat_id: chatId, text };
@@ -173,9 +165,7 @@ class MessageSender {
             
             if (this.parseMode) body.parse_mode = this.parseMode;
             
-            const res = await this.call("sendMessage", body);
-            
-            const parsed = await res.json();
+            const parsed = await this.call("sendMessage", body);
             
             if (parsed.ok === false) {
                 if (parsed.description.slice(13, 33) === "can't parse entities") {
@@ -302,6 +292,7 @@ class MessageSender {
             const body: any = { chat_id: chatId, message_id: messageId, text: options.text }
             
             this.includeOptions(body, options); // keyboard, image, etc
+            if (this.parseMode) body.parse_mode = this.parseMode;
             
             const res = await fetch(`${(this as any).apiUrl}/editMessageText`, {
                 method: "POST",
@@ -317,6 +308,7 @@ class MessageSender {
             const body: any = { chat_id: chatId, message_id: messageId, caption: options.text }
             
             this.includeOptions(body, options);
+            if (this.parseMode) body.parse_mode = this.parseMode;
             
             const res = await fetch(`${(this as any).apiUrl}/editMessageCaption`, {
                 method: "POST",
@@ -349,18 +341,20 @@ class MessageSender {
      * @param {FormData | any} arguments Data to be send
      */
     async call(method: string, data: FormData | any) {
+        let response;
         if (data instanceof FormData) {
-            return await fetch(`${(this as any).apiUrl}/${method}`, {
+            response = await fetch(`${(this as any).apiUrl}/${method}`, {
                 method: "POST",
                 body: data,
             });
         } else {
-            return await fetch(`${(this as any).apiUrl}/${method}`, {
+            response = await fetch(`${(this as any).apiUrl}/${method}`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(data),
             });
         }
+        return response.json();
     }
     
     /*
@@ -412,14 +406,6 @@ class MessageSender {
         if (stringPassed) return this.sendMessage(chat_id, argument, options || {});
         else if (!stringPassed && argument?.text) return this.sendMessage(chat_id, argument.text, argument);
     }
-
-    protected async answerCallbackQuery(id: string, text: string) {
-        await fetch(`${(this as any).apiUrl}/answerCallbackQuery`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ callback_query_id: id, text }),
-        });
-    }
 }
 
 type ParserName = 'HTML' | 'MarkdownV2' | 'Markdown' | null;
@@ -463,7 +449,7 @@ class KeyboardManager {
             return { inline_keyboard: this.serializeKeyboard(keyboard.Build()) }
         }
         else {
-            return { keyboard: this.serializeKeyboard(keyboard.Build()) }
+            return { keyboard: this.serializeKeyboard(keyboard.Build()), resize_keyboard: true } // TODO add option
         }
     }
 }
@@ -589,7 +575,6 @@ class HandlerManager {
     }
     
     protected addHandler(update: string, func: Function, key?: string, value?: any) {
-        console.log('adding', key, value)
         this.handlers.push({
             update,
             ...(key ? { key } : {}),
@@ -606,8 +591,8 @@ class HandlerManager {
             if (handler.update) {
                 if (handler.key === "text" && !handler.value.test(context.text)) continue;
                 else if (handler.key !== undefined) {
-                    if (handler.value !== undefined && context[handler.key] !== handler.value) continue;
-                    else if (context[handler.value] === undefined) continue;
+                    if (handler.value !== undefined && context.update[handler.key] !== handler.value) continue;
+                    else if (context.update[handler.value] === undefined) continue;
                 }
             }
             if (!!await handler.func(context)) return true;
@@ -668,42 +653,47 @@ class Polling extends CallbackManager {
     
     protected async processUpdate(context: Context, update: any) {
         handleMiddleware: {
+            for (const handler of this.handlers) {
+                if (handler.update) {
+                    if (!update[handler.update]) continue;
+                    else if (handler.key !== undefined) {
+                        if (handler.value !== undefined) {
+                            if (handler.key === "text") {
+                                if (!handler.value.test(context.text)) continue;
+                            }
+                            else if (context.update[handler.key] !== handler.value) continue;
+                        }
+                        else if (context.update[handler.value] === undefined) continue;
+                    }
+                }
+                if (!!await handler.func(context)) {
+                    break; // if handler returns anything - stop
+                }
+            }
+            
             if (update.callback_query) {
                 const stopped = await (this as any).handle(context, 'callback_query')
-                if (stopped) break handleMiddleware;
-                
-                const { id, data } = context;
-                
-                if (data !== ' ') {
-                    const args = data.split(' ');
-                    if ((this as any).signCallbacks === true) {
-                        if ((this as any).sig(data.slice(this.signLength + 1)) !== data.slice(0, this.signLength)) {
-                            console.warn("Wrong signature");
-                        }
-                        else await this.handleCallback(context, args[1], args.slice(2));
-                    } else {
-                        await this.handleCallback(context, args[0], args.slice(1));
-                    }
-                }
-                
-                (this as any).answerCallbackQuery(id, context._query || ' ');
-            }
-            else {
-                for (const handler of this.handlers) {
-                    if (handler.update) {
-                        if (!update[handler.update]) continue;
-                        else if (handler.key !== undefined) {
-                            if (handler.value !== undefined) {
-                                if (handler.key === "text") {
-                                    if (!handler.value.test(context.text)) continue;
-                                }
-                                else if (context[handler.key] !== handler.value) continue;
+                if (!stopped) {
+                    const { data } = context.update;
+                    
+                    if (data !== ' ') {
+                        const args = data.split(' ');
+                        if ((this as any).signCallbacks === true) {
+                            if ((this as any).sig(data.slice(this.signLength + 1)) !== data.slice(0, this.signLength)) {
+                                console.warn("Wrong signature");
                             }
-                            else if (context[handler.value] === undefined) continue;
+                            else await this.handleCallback(context, args[1], args.slice(2));
+                        } else {
+                            await await this.handleCallback(context, args[0], args.slice(1));
                         }
                     }
-                    if (!!await handler.func(context)) break; // if handler returns anything - stop
                 }
+                
+                const answer = {
+                    callback_query_id: context.update.id,
+                    ...(context.update._answer && { ...context.update._answer })
+                }
+                await (this as any).call('answerCallbackQuery', answer);
             }
         }
         
@@ -724,43 +714,127 @@ function extract(update: any): any {
     return [ Object.values(update)[1], Object.keys(update)[1] ];
 }
 
-export class Context {
-    public event: string;
-    public data: string = ""; // /start
-    public reply: (argument: string | MessageOpts, options?: MessageOpts) => any;
-    public edit?: (argument1: string | MessageOpts | KeyboardInterface, argument2?: MessageOpts | KeyboardInterface) => any;
-    public query?: (text: string) => any;
-    public react?: (emoji: string, big?: boolean) => any;
-    [key: string]: any;
-    
-    constructor(ctx: any, eventName: string, service: any, isCallbackQuery: boolean) {
-        this.event = eventName;
-        Object.assign(this, ctx);
-        
-        this.reply = (argument: string | MessageOpts, options?: MessageOpts) =>
-            service.identifyReply(ctx, argument, options);
-        
-        if (isCallbackQuery) {
-            this.edit = (
-                argument1: string | MessageOpts | KeyboardInterface,
-                argument2?: MessageOpts | KeyboardInterface
-            ) => service.identifyEdit(ctx, argument1, argument2);
-            
-            this.query = (text: string) => service.query(ctx, text);
-        } else {
-            this.react = (emoji: string, big?: boolean) =>
-                service.react(ctx.chat.id, ctx.message_id, emoji, big);
-            if (this.text && this.text.startsWith('/start')) {
-                this.data = this.text.slice(7);
-            }
-        }
+class ShortcutManager {
+    async bot() {
+        const { ok, result } = await (this as any).call('getMe', {})
+        return ok ? result : {}
     }
     
-    get isChat(): boolean {
-        return !!this.chat;
+    async isAdmin(chat: any, from: any) {
+        if (!from) {
+            console.warn('[Context] Can\'t check admin privileges');
+            return;
+        }
+        
+        if (chat?.id >= 0) return false;
+        
+        const body = { chat_id: chat.id, user_id: from.id }
+        const { ok, result } = await (this as any).call("getChatMember", body)
+        
+        if (ok === false) return false;
+        
+        return result.status === 'administrator' || result.status === 'creator'
     }
 }
 
+class Context {
+    public readonly event: string;
+    private readonly _update: any;
+    private readonly _service: any;
+    private readonly _isCallbackQuery: boolean;
+    
+    constructor(ctx: any, eventName: string, service: any, isCallbackQuery: boolean) {
+        this.event = eventName;
+        this._update = ctx;
+        this._service = service;
+        this._isCallbackQuery = isCallbackQuery;
+    }
+    
+    get update(): any {
+        return this._update;
+    }
+    
+    get service(): any {
+        return this._service;
+    }
+    
+    get text(): string | undefined {
+        return this._update.text || this._update.data;
+    }
+    
+    get chat(): { id: number; [key: string]: any } | undefined {
+        return this._update.chat || this._update.message?.chat;
+    }
+    
+    get from(): { id: number; [key: string]: any } | undefined {
+        return this._update.from;
+    }
+    
+    get message_id(): number | undefined {
+        return this._update.message_id || this._update.message?.message_id;
+    }
+    
+    get data(): string | undefined {
+        if (this._isCallbackQuery) {
+            return this._update.data;
+        }
+        if (this.text && this.text.startsWith('/start')) {
+            return this.text.slice(7);
+        }
+        return undefined;
+    }
+    
+    reply(argument: string | MessageOpts, options?: MessageOpts) {
+        return this._service.identifyReply(this._update, argument, options);
+    }
+
+    edit(argument1: string | MessageOpts | KeyboardInterface, argument2?: MessageOpts | KeyboardInterface) {
+        if (!this._isCallbackQuery) {
+            console.warn('[Context] .edit() can be used in callbacks only');
+            return;
+        }
+        return this._service.identifyEdit(this._update, argument1, argument2);
+    }
+    
+    respond(argument1: string | MessageOpts | KeyboardInterface, argument2?: MessageOpts | KeyboardInterface) {
+        if (!this._isCallbackQuery) {
+            return this._service.identifyReply(this._update, argument1, argument2)
+        }
+        else return this._service.identifyEdit(this._update, argument1, argument2);
+    }
+
+    answer(text: string, options: any = {}) {
+        if (!this._isCallbackQuery) {
+            console.warn('[Context] .query() can be used in callbacks only');
+            return;
+        }
+        const answer: any = { text };
+        if (options.alert) answer.show_alert = true;
+        if (options.url) answer.url = options.url;
+        this.update._answer = { text, ...options };
+    }
+
+    react(emoji: string, big?: boolean) {
+        if (this._isCallbackQuery) {
+            console.warn('[Context] .react() can\'t be used for callback_query');
+            return;
+        }
+        
+        const chatId = this.chat?.id;
+        const messageId = this.message_id;
+
+        if (!chatId || !messageId) {
+             console.warn('[Context] .react() couldn\'t find chat.id or message_id');
+             return;
+        }
+        
+        return this._service.react(chatId, messageId, emoji, big);
+    }
+    
+    async isAdmin() {
+        return this.service.isAdmin(this.chat, this.from);
+    }
+}
 
 
 class TelegramBotBase {}
@@ -774,6 +848,7 @@ interface TelegramBotBase
         ErrorManager,
         HandlerManager,
         CallbackSigner,
+        ShortcutManager,
         Polling {}
 
 applyMixins(TelegramBotBase, [
@@ -785,6 +860,7 @@ applyMixins(TelegramBotBase, [
     ErrorManager,
     HandlerManager,
     CallbackSigner,
+    ShortcutManager,
     Polling,
 ]);
 

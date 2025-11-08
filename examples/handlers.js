@@ -35,10 +35,13 @@ bot.use(async ctx => {
    This is how the library works: returning anything from a handler halts the middleware chain (like ctx.stop). */
 bot.on('photo', ctx => ctx.react("❤"))
 bot.on('voice', ctx => ctx.react("👍"))
-bot.on('poll', ctx => ctx.react("👾"))
+bot.on('message:poll', ctx => ctx.react("👾"))
+bot.on('my_chat_member', ctx => ctx.reply("HAAI everyone!"))
 
 bot.on('/start', onStart);
 
-bot.use(ctx => ctx.reply("Unknown message!", Keyboard().Text("/start")))
+bot.use(ctx => {
+    if (ctx.chat.id > 0) ctx.reply("Unknown message!", Keyboard().Text("/start"))
+})
 
 bot.startPolling()
