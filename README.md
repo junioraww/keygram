@@ -1,6 +1,6 @@
-<h1 align="center">Keygram WIP</h1>
+<h1 align="center">Keygram</h1>
 
-<p align="center"><strong><ins>Experimental</ins> library for interactive panels</strong></p>
+<p align="center"><strong><ins>Experimental</ins> bot library for interactive panels</strong></p>
 <p align="center">
   <img src="https://img.shields.io/badge/typescript-%23007ACC.svg?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript">
   <img src="https://img.shields.io/badge/Telegram-2CA5E0?style=for-the-badge&logo=telegram&logoColor=white" alt="Telegram">

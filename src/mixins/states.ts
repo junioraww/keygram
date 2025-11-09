@@ -1,8 +1,13 @@
 export class StateManagerMixin {
     states: StateManager = new StateManager();
-    cacheRemoverInterval: NodeJS.Timeout | null = null; 
+    cacheRemoverInterval: NodeJS.Timeout | null = null;
+    statesEnabled = true;
     
-    _startCacheRemover(intervalMs: number = 1000): void {
+    disableStates(): void {
+        this.statesEnabled = false;
+    }
+    
+    _startStateCacheRemover(intervalMs: number = 1000): void {
         if (this.cacheRemoverInterval) {
             this._stopCacheRemover();
         }
@@ -63,18 +68,17 @@ export class StateManager {
     }
     
     load: any = () => {
-        console.warn('State load not implemented')
         return {}
     }
     
-    async get(update: any) {
-        const { id } = update.from;
-        const entry = this.cache[id]; 
+    get: any = async (ctx: any): Promise<any> => {
+        const { id } = ctx.from;
+        const entry = this.cache[id];
         if (entry) {
             entry.ex = now() + this.unloadAfter;
             return entry.val;
         }
-        const val = await this.load(update);
+        const val = await this.load(ctx);
         this.cache[id] = {
             ex: now() + this.unloadAfter,
             val: val,
@@ -83,8 +87,8 @@ export class StateManager {
         return val;
     }
     
-    async set(update: any, new_value: any) {
-        const { id } = update.from;
+    set: any = (ctx: any, new_value: any): Promise<any> => {
+        const { id } = ctx.from;
         if (!this.cache[id]) {
             this.size++;
         }
@@ -92,7 +96,7 @@ export class StateManager {
             ex: now() + this.unloadAfter,
             val: new_value,
         };
-        await this.save(update, new_value);
+        return this.save(ctx, new_value);
     }
     
     delete(id: number): boolean {

@@ -4,3 +4,4 @@ docs
 examples
 bun.lock
 eslint.config.js
+.prettierrc.json

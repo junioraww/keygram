@@ -77,19 +77,23 @@ class CallbackManager {
     register(...fs: Function[]) {
         for (const func of fs) {
             if (this.started && func.name === "anon")
-                throw new NamelessCallback("Can't create callbacks after starting the bot (unsafe for reloads)");
+                throw new NamelessCallback("Can't register anon function outside Keyboard()");
 
             if (!this.allow_override && this.callbacks[func.name])
                 throw new CallbackOverride("Callback with name " + func.name + " already registered!");
-            
+
             this.callbacks[func.name] = func;
         }
+    }
+
+    protected registerAnon(cb_name: string, func: Function) {
+        this.callbacks[cb_name] = func;
     }
 
     hasCallback(func: Function) {
         return !!this.callbacks[func.name];
     }
-    
+
     hasTextCallback(text: string, func: Function) {
         return (this as any).handlers.findIndex((h: any) => h.update === "message"
                                              && h.key === "text"
@@ -104,9 +108,9 @@ class CallbackManager {
             console.error(err)
             return false;
         }
-        
+
         const fixedArgs: any[] = [];
-        
+
         for (const arg of args) {
             if (arg === 'false') fixedArgs.push(false);
             else if (arg === 'true') fixedArgs.push(true);
@@ -117,14 +121,14 @@ class CallbackManager {
             else if (!isNaN(Number(arg))) fixedArgs.push(Number(arg));
             else fixedArgs.push(arg);
         }
-        
+
         return this.callbacks[name](ctx, ...fixedArgs);
     }
 }
 
 class MessageSender {
     parseMode: string | null = null;
-    
+
     /*
      * Sending a message
      * @param {number} chatId Chat ID
@@ -135,19 +139,19 @@ class MessageSender {
     async sendMessage(chatId: number, text: string, options?: MessageOpts | KeyboardInterface) {
         if (options && "file" in options && options.file) {
             const body: any = { chat_id: chatId, caption: text };
-            
+
             this.includeOptions(body, options);
-            
+
             if (this.parseMode) body.parse_mode = this.parseMode;
-            
+
             const { file } = options;
-            
+
             let res;
-            
+
             const type = Object.keys(options.file)[0];
             const data: string = (options.file as any)[type];
             const method = "send" + type[0].toUpperCase() + type.slice(1);
-            
+
             if (!data.startsWith(".") && !data.startsWith("/")) {
                 body.photo = data;
                 
@@ -167,20 +171,20 @@ class MessageSender {
         }
         else {
             const body: any = { chat_id: chatId, text };
-            
+
             if (options) this.includeOptions(body, options);
-            
+
             if (this.parseMode) body.parse_mode = this.parseMode;
-            
+
             const parsed = await this.call("sendMessage", body);
-            
+
             if (parsed.ok === false) {
                 if (parsed.description.slice(13, 33) === "can't parse entities") {
                     const err = new ParserError(parsed.description.slice(35));
                     if ((this as any).shouldThrow(err)) throw err;
                 }
             }
-            
+
             return parsed;
         }
     }
@@ -224,7 +228,7 @@ class MessageSender {
         if (options.file) {
             const type = Object.keys(options.file)[0];
             const data: string = (options.file as any)[type]; // either document ID, URL or local path
-            
+
             if (data.startsWith(".") || data.startsWith("/")) {
                 const body: any = {
                     chat_id: chatId,
@@ -235,30 +239,30 @@ class MessageSender {
                         media: "attach://document",
                     }
                 }
-                
+
                 this.includeOptions(body, options);
                 
                 if (options.spoiler === true) body.media.has_spoiler = true;
                 if (this.parseMode) body.media.parse_mode = this.parseMode;
-                
+
                 const blob = await this.loadBlob(data); // path
                 if (!blob) return null;
                 const form = new FormData();
-                
+
                 Object.keys(body).forEach(k => {
                     if (typeof body[k] === 'string') form.append(k, body[k]);
                     else form.append(k, JSON.stringify(body[k]))
                 });
-                
+
                 form.append("document", blob, "photo.jpg");
-                
+
                 const res = await fetch(`${(this as any).apiUrl}/editMessageMedia`, {
                     method: "POST",
                     body: form,
                 });
-                
+
                 const parsed = await res.json();
-            
+
                 return parsed;
             }
             else {
@@ -271,64 +275,64 @@ class MessageSender {
                         media: data,
                     }
                 }
-                
+
                 this.includeOptions(body, options);
-                
+
                 if (options.spoiler === true) body.media.has_spoiler = true;
                 if (this.parseMode) body.media.parse_mode = this.parseMode;
-                
+
                 const res = await fetch(`${(this as any).apiUrl}/editMessageMedia`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify(body),
                 });
-                
+
                 const parsed = await res.json();
-                
+
                 if (parsed.ok === false) {
                     console.error(parsed.description.slice(13));
                     if (parsed.description.slice(13) === 'inline keyboard expected') {
                         
                     }
                 }
-                
+
                 return parsed;
             }
         }
         else if ("text" in options && options.text) {
             const body: any = { chat_id: chatId, message_id: messageId, text: options.text }
-            
+
             this.includeOptions(body, options); // keyboard, image, etc
             if (this.parseMode) body.parse_mode = this.parseMode;
-            
+
             const res = await fetch(`${(this as any).apiUrl}/editMessageText`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(body),
             });
-            
+
             const parsed = await res.json();
-            
+
             return parsed;
         }
         else if ("caption" in options && options.caption) {
             const body: any = { chat_id: chatId, message_id: messageId, caption: options.text }
-            
+
             this.includeOptions(body, options);
             if (this.parseMode) body.parse_mode = this.parseMode;
-            
+
             const res = await fetch(`${(this as any).apiUrl}/editMessageCaption`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(body),
             });
-            
+
             const parsed = await res.json();
-            
+
             return parsed;
         }
     }
-    
+
     /*
      * Reacting to message
      */
@@ -341,7 +345,7 @@ class MessageSender {
         }
         return this.call("setMessageReaction", body);
     }
-    
+
     /*
      * Calling any Telegram Bot API functions
      * @param {string} method
@@ -363,19 +367,19 @@ class MessageSender {
         }
         return response.json();
     }
-    
+
     /*
      * Internal functions to handle different variants of arguments
      * And also to use the same argument for caption and text
      */
     protected async identifyEdit(ctx: any, argument1: string | MessageOpts | KeyboardInterface,
-                                           argument2?: MessageOpts | KeyboardInterface) {
+        argument2?: MessageOpts | KeyboardInterface) {
         if (!ctx.message?.chat?.id) throw new Error("Can't edit outside callback context")
         const chat_id = ctx.message?.chat?.id;
-        
+
         if (typeof argument1 === 'string') {
             const body: any = "Build" in (argument2 || {}) ? { keyboard: argument2 } : argument2 || {};
-            
+
             if (!ctx.message.text) {
                 return this.editMessage(chat_id, ctx.message.message_id, {
                     ...body,
@@ -391,7 +395,7 @@ class MessageSender {
         }
         else {
             const body: any = "Build" in argument1 ? { keyboard: argument1 } : argument1;
-            
+
             if (!ctx.message.text) {
                 return this.editMessage(chat_id, ctx.message.message_id, {
                     ...body,
@@ -406,7 +410,7 @@ class MessageSender {
             }
         }
     }
-    
+
     protected async identifyReply(ctx: any, argument: string | MessageOpts, options: MessageOpts | undefined) {
         const chat_id = ctx.message?.chat?.id || ctx.chat.id;
         const stringPassed = typeof argument === 'string';
@@ -444,19 +448,12 @@ class ErrorManager {
 }
 
 class KeyboardManager {
-    protected serializeKeyboard(keyboard: SerializedBtn[][]) {
-        return keyboard.map(row => row.map(btn => {
-            if (btn.url) return { text: btn.text, url: btn.url }
-            return { text: btn.text, callback_data: btn.data || ' ' }
-        }));
-    }
-    
     protected getKeyboardMarkup(keyboard: KeyboardInterface) {
         if (keyboard._inline) {
-            return { inline_keyboard: this.serializeKeyboard(keyboard.Build()) }
+            return { ...keyboard.Build() }
         }
         else {
-            return { keyboard: this.serializeKeyboard(keyboard.Build()), resize_keyboard: true } // TODO add option
+            return { ...keyboard.Build(), resize_keyboard: true } // TODO add option
         }
     }
 }
@@ -515,6 +512,7 @@ interface Handler {
     key?: string; // key to be checked
     value?: any; // key value to be compared
     func: Function;
+    always?: boolean;
 }
 
 class HandlerManager {
@@ -577,6 +575,18 @@ class HandlerManager {
         this.handlers.push({
             update: undefined,
             func
+        })
+        this.addedHandlers.add(undefined)
+    }
+    
+    /*
+     * This middleware will bypass context state
+     */
+    useAlways(func: Function) {
+        this.handlers.push({
+            update: undefined,
+            func,
+            always: true
         })
         this.addedHandlers.add(undefined)
     }
@@ -660,16 +670,16 @@ class Polling extends CallbackManager {
     
     protected async processUpdate(context: Context, update: any) {
         handleMiddleware: {
-            const state = await context.state;
-            const allow = getAllow(state); // { h: {}, f: {} }
+            const state = (this as any).statesEnabled && await context._loadState();
+            const allow = state && getAllow(state);
+            
+            console.log(allow)
             
             for (const handler of this.handlers) {
                 if (handler.update) {
                     if (!update[handler.update]) continue;
-                    else if (allow && !allow.h[handler.update]) continue;
                     else if (handler.key !== undefined) {
-                        if (allow && allow.h[handler.update] !== null && allow.h[handler.update] !== handler.key) continue;
-                        else if (handler.value !== undefined) {
+                        if (handler.value !== undefined) {
                             if (handler.key === "text") {
                                 if (!handler.value.test(context.text)) continue;
                             }
@@ -678,31 +688,43 @@ class Polling extends CallbackManager {
                         else if (context.update[handler.value] === undefined) continue;
                     }
                 }
-                console.log('Function name', handler.func.name)
-                if (allow && handler.func.name.length && !allow.f[handler.func.name]) continue;
-                if (!!await handler.func(context)) {
+                
+                if (allow && !handler.always &&
+                   !allow[handler.func.name] && 
+                  !(this as any).useAlwaysList.has(handler.func.name)) continue;
+                
+                const middlewareRes = await this.chainResponse(await handler.func(context), context);
+                
+                if (!!middlewareRes) {
                     break; // if handler returns anything - stop
                 }
             }
             if (update.callback_query) {
-                const stopped = allow && allow.f['callback_query'] && await (this as any).handle(context, 'callback_query')
-                if (!stopped) {
-                    const { data } = context.update;
-                    
-                    if (data !== ' ') {
-                        const args = data.split(' ');
-                        if ((this as any).signCallbacks === true) {
+                const { data } = context.update;
+                
+                if (data !== ' ') {
+                    const args = data.split(' ');
+                    if ((this as any).signCallbacks === true) {
+                        //if ((this as any).callbacks[args[1]]) { // check if function name registered
                             if ((this as any).sig(data.slice(this.signLength + 1)) !== data.slice(0, this.signLength)) {
                                 console.warn("Wrong signature");
                             }
                             else {
-                                if (!allow || allow.f[args[1]])
-                                    await this.handleCallback(context, args[1], args.slice(2));
+                                if (!allow || allow[args[1]]) {
+                                    await this.chainResponse(
+                                        await this.handleCallback(context, args[1], args.slice(2)),
+                                        context
+                                    );
+                                }
                             }
-                        } else {
-                            if (!allow || allow.f[args[0]])
-                                await this.handleCallback(context, args[0], args.slice(1));
-                        }
+                       //}
+                    } else {
+                      /* todo check too */
+                        if (!allow || allow[args[0]])
+                            await this.chainResponse(
+                                await this.handleCallback(context, args[0], args.slice(1)),
+                                context
+                            );
                     }
                 }
                 
@@ -718,6 +740,16 @@ class Polling extends CallbackManager {
         }
         
         if(this.scriptOnUpdate !== undefined) await this.scriptOnUpdate(update);
+    }
+    
+    private async chainResponse(result: any, context: Context): Promise<any> {
+        if (typeof result === 'function') 
+            return await this.chainResponse(await result(context), context);
+        else if (typeof result === 'string') {
+            if (this.callbacks[result]) 
+                return await this.chainResponse(await this.callbacks[result](context), context);
+        }
+        return false;
     }
     
     private Context(update: any): Context | null {
@@ -736,29 +768,17 @@ function extract(update: any): any {
 
 /* when state allow is on */
 // TODO caching
-function getAllow(state: any): any {
-    if (typeof state !== 'object') return undefined
+function getAllow(state: any): Record<string, boolean> | undefined {
+    if (typeof state !== 'object' || !state || !state.allow) return undefined
     
-    let allow = state?.allow
-    if (!allow) return undefined
-    
+    let allow = state.allow
     if (typeof allow === 'string') allow = [ allow ]
     
-    const result: any = { h: {}, f: {} }
+    const result: Record<string, boolean> = {}
     
-    if (!allow.length || allow.length === 1 && allow[0] === "") return result;
+    if (!allow.length || allow.length === 1 && allow[0] === "") return result
     
-    for (const entry of allow) {
-        if (entry.indexOf(':') !== -1) {
-            const sep = entry.split(':')
-            result.h[sep[0]] = sep[1]
-        }
-        else {
-            if (updateHandlers.has(entry)) result.h[entry] = null;
-            else if (messageHandlers.has(entry)) result.h['message'] = entry;
-            else result.f[entry] = 1;
-        }
-    }
+    allow.forEach((a: string) => result[a] = true)
     
     return result;
 }
@@ -791,59 +811,62 @@ class Context {
     private readonly _update: any;
     private readonly _service: any;
     private readonly _isCallbackQuery: boolean;
-    
-    private _state: any = null;
-    
-    // TODO ability to disable states?
-    
+
+    private _state: Record<string, any> | undefined  = undefined;
+
     constructor(ctx: any, eventName: string, service: any, isCallbackQuery: boolean) {
         this.event = eventName;
         this._update = ctx;
         this._service = service;
         this._isCallbackQuery = isCallbackQuery;
-        
-        // TODO fix! currently unsafe
-        return new Proxy(this, {
-            get(target, prop, receiver) {
-              if (prop === "state") {
-                return (async () => {
-                  if (target._state === null) {
-                    target._state = await target._service.states.get(ctx);
-                  }
-                  return target._state;
-                })();
-              }
-              return Reflect.get(target, prop, receiver);
-            },
-            set(target, prop, value, receiver) {
-              if (prop === "state") {
-                (async () => {
-                  await target._service.states.set(ctx, value);
-                  target._state = value;
-                })();
-                return true;
-              }
-              return Reflect.set(target, prop, value, receiver);
-            },
-          });
+    }
+
+    get state(): Record<string, any> {
+        return this._state || {};
+        //return this._service.states.cache[this._update.from.id]; // may be unloaded!
+    }
+
+    /*
+     * UNSAFE!
+     * Sets state without checking result
+     */
+    set state(new_state: Record<string, any>) {
+        this._state = new_state;
+        this._service.states.set(this._update, new_state);
+    }
+
+    /*
+     * If you need to check database response use this
+     */ 
+    async setState(new_state: Record<string, any>) {
+        this._state = new_state;
+        return this._service.states.set(this._update, new_state);
     }
     
+    async _loadState() {
+        this._state = await this._service.states.get(this);
+        return this._state;
+    }
+
     get update(): any {
         return this._update;
     }
-    
+
     get service(): any {
         return this._service;
     }
-    
+
     get text(): string | undefined {
-        return this._update.text || this._update.caption || this._update.data;
+        return this._update.text || this._update.caption;
     }
-    
+
     getMedia(type: string) {
         return this._update.message?.[type] || this._update[type];
     }
-    
+
+    /*
+     * Returns type of message (text, photo, video, callback_query, etc)
+     */
     get type(): string | undefined {
         const msg = this._update.message || this._update;
 
@@ -863,32 +886,28 @@ class Context {
         if (msg.venue) return "venue";
         if (msg.poll) return "poll";
         if (msg.dice) return "dice";
-        
-        if (this._isCallbackQuery && msg.data) return "callback_query";
-        
+
+        //if (this._isCallbackQuery && msg.data) return "callback";
+
         return "unknown";
     }
     
+    get isCallback(): boolean {
+        return this._isCallbackQuery;
+    }
+
     get chat(): { id: number; [key: string]: any } | undefined {
         return this._update.chat || this._update.message?.chat;
     }
-    
+
     get from(): { id: number; [key: string]: any } | undefined {
         return this._update.from;
     }
-    
+
     get message_id(): number | undefined {
         return this._update.message_id || this._update.message?.message_id;
     }
-    
-    get state(): any {
-        return this._service.states.get(this._update)
-    }
-    
-    set state(new_state: any) {
-        this._service.states.set(this._update, new_state)
-    }
-    
+
     get data(): string | undefined {
         if (this._isCallbackQuery) {
             return this._update.data;
@@ -898,7 +917,7 @@ class Context {
         }
         return undefined;
     }
-    
+
     reply(argument: string | MessageOpts, options?: MessageOpts) {
         return this._service.identifyReply(this._update, argument, options);
     }
@@ -910,7 +929,7 @@ class Context {
         }
         return this._service.identifyEdit(this._update, argument1, argument2);
     }
-    
+
     respond(argument1: string | MessageOpts | KeyboardInterface, argument2?: MessageOpts | KeyboardInterface) {
         if (!this._isCallbackQuery) {
             return this._service.identifyReply(this._update, argument1, argument2)
@@ -946,21 +965,50 @@ class Context {
         return this._service.react(chatId, messageId, emoji, big);
     }
     
+    async delete() {
+        if (!this._isCallbackQuery) {
+            console.warn('[Context] .delete() can be used in callbacks only');
+            return;
+        }
+        
+        const chat_id = this.chat?.id;
+        const message_id = this.message_id;
+        if (!chat_id || !message_id) return;
+        
+        return this._service.call('deleteMessage', { message_id, chat_id })
+    }
+    
+    async call(method: string, params?: Record<string, any>) {
+        const chat_id = this.chat?.id;
+        
+        const body = {
+            ...(chat_id && { chat_id }),
+            ...params
+        }
+        
+        return this._service.call(method, body);
+    }
+
     async isAdmin(): Promise<boolean> {
         return this.service.isAdmin(this.chat, this.from);
     }
-    
-    isGroup(): boolean {
+
+    get isGroup(): boolean {
         return (this._update.message || this._update).chat.id < 0;
     }
-    
-    async input(func: string | Function) {
+
+    async input(func: string | Function, allowed?: string | string[]) {
         if (!func) throw new Error("No function specified after input is done!")
         else if (!(this as any)._service.hasCallback(func)) throw new Error("Function must be registered! " + func)
-        this.state = {
+        return this.setState({
             ...this.state,
+            ...(allowed && { allow: typeof allowed === 'string' ? [allowed] : allowed }),
             input: typeof func === 'function' ? func.name : func
-        }
+        })
+    }
+
+    async reset() {
+        return await this.setState({})
     }
 }
 
@@ -999,6 +1047,7 @@ export class TelegramBot extends TelegramBotBase {
     callbacks: Record<string, Function> = {};
     handlers: Handler[] = [];
     addedHandlers: Set<string | undefined> = new Set();
+    useAlwaysList: Set<string> = new Set();
     allow_override = false;
     mode = 0;
     parseMode: string | null = null;
@@ -1008,6 +1057,7 @@ export class TelegramBot extends TelegramBotBase {
     started = false;
     states = new StateManager();
     cacheRemoverInterval: NodeJS.Timeout | null = null;
+    statesEnabled = true;
 
     constructor(options: BotOptions | string) {
         super();
@@ -1024,7 +1074,10 @@ export class TelegramBot extends TelegramBotBase {
         if (!token) throw new OptionsError("Wrong token");
 
         (this as any).initBot(token);
-        (this as any)._startCacheRemover(1000);
+        
+        if (this.statesEnabled) {
+            (this as any)._startStateCacheRemover(1000);
+        }
     }
 }
 

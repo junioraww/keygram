@@ -18,7 +18,7 @@ export interface KeyboardInterface {
     _keyboard: SerializedBtn[][];
     _inline: boolean;
     Row: () => KeyboardInterface;
-    Build(): SerializedBtn[][];
+    Build(): Record<string, any>;
 }
 
 /*
@@ -58,8 +58,17 @@ function Callback(this: any, text: string, action: Function | string, ...args: a
         const strArgs = (args?.length ? (' ' + args?.join(' ')) : ''); // stringified args
         
         if (typeof action !== 'string') {
-            if (!this._bot.hasCallback(action)) this._bot.register(action);
-            unsigned = action.name + strArgs;
+            // todo warning with anon functions
+            console.log(action.name)
+            if (action.name === 'anon') {
+                const id = randomCbName()
+                this._bot.registerAnon(id, action)
+                unsigned = id + strArgs;
+            }
+            else {
+                if (!this._bot.hasCallback(action)) this._bot.register(action);
+                unsigned = action.name + strArgs;
+            }
         }
         else {
             unsigned = action + strArgs;
@@ -87,6 +96,22 @@ function Callback(this: any, text: string, action: Function | string, ...args: a
         
         return this;
     }
+}
+
+function randomCbName(): string {
+    return btoa(Math.random().toString()).slice(2, 8)
+}
+
+/*
+ * Returns reply_markup entry for this keyboard
+ */
+function Build(this: KeyboardInterface): Record<string, any> {
+    const buttons = this._keyboard.map((row: SerializedBtn[]) => row.map(btn => {
+        if (btn.url) return { text: btn.text, url: btn.url }
+        return { text: btn.text, callback_data: btn.data || ' ' }
+    }));
+    if (this._inline) return { inline_keyboard: buttons }
+    else return { keyboard: buttons }
 }
 
 /*
@@ -120,12 +145,13 @@ function createKeyboard(botId: number | undefined, inline: boolean): KeyboardInt
         Row,
         Text,
         Callback,
-        Build: () => _keyboard,
+        Build,
     };
     
     obj.Row = obj.Row.bind(obj);
     obj.Text = obj.Text.bind(obj);
     obj.Callback = obj.Callback.bind(obj);
+    obj.Build = obj.Build.bind(obj);
     
     return obj;
 }
