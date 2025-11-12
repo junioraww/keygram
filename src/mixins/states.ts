@@ -1,21 +1,16 @@
 export class StateManagerMixin {
     states: StateManager = new StateManager();
-    cacheRemoverInterval: NodeJS.Timeout | null = null;
-    statesEnabled = true;
-    
-    disableStates(): void {
-        this.statesEnabled = false;
-    }
-    
+    cacheRemoverInterval: NodeJS.Timeout | undefined;
+
     _startStateCacheRemover(intervalMs: number = 1000): void {
         if (this.cacheRemoverInterval) {
             this._stopCacheRemover();
         }
-        
+
         this.cacheRemoverInterval = setInterval(() => {
             const sec = now();
             const cache = this.states.cache; 
-            
+
             for (const userId in cache) {
                 if (Object.prototype.hasOwnProperty.call(cache, userId)) {
                     if (cache[userId].ex < sec) {
@@ -23,7 +18,7 @@ export class StateManagerMixin {
                     }
                 }
             }
-            
+
             const diff = this.states.size - this.states.maxSize;
             if (diff > 0) {
                 const entries = Object.entries(cache);
@@ -35,11 +30,11 @@ export class StateManagerMixin {
             }
         }, intervalMs);
     }
-    
+
     _stopCacheRemover(): void {
         if (this.cacheRemoverInterval) {
             clearInterval(this.cacheRemoverInterval);
-            this.cacheRemoverInterval = null;
+            this.cacheRemoverInterval = undefined;
         }
     }
 }
@@ -54,23 +49,23 @@ export class StateManager {
     unloadAfter: number = 60;
     maxSize: number = 100;
     size: number = 0;
-    
+
     setUnloadAfter(seconds: number) {
         this.unloadAfter = seconds;
     }
-    
+
     setMaxSize(amount: number) {
         this.maxSize = amount;
     }
-    
+
     save: any = () => {
         console.warn('State save not implemented')
     }
-    
+
     load: any = () => {
         return {}
     }
-    
+
     get: any = async (ctx: any): Promise<any> => {
         const { id } = ctx.from;
         const entry = this.cache[id];
@@ -86,7 +81,7 @@ export class StateManager {
         this.size++; 
         return val;
     }
-    
+
     set: any = (ctx: any, new_value: any): Promise<any> => {
         const { id } = ctx.from;
         if (!this.cache[id]) {
@@ -98,7 +93,7 @@ export class StateManager {
         };
         return this.save(ctx, new_value);
     }
-    
+
     delete(id: number): boolean {
         if (this.cache[id]) {
             delete this.cache[id];
