@@ -1,4 +1,4 @@
-import { TelegramBot } from '$'
+import { TelegramBot, Context } from '$'
 import { INSTANCES, BOT_IDS } from '$/store'
 import { NoBotSelected } from '$/errors'
 
@@ -7,7 +7,7 @@ import { NoBotSelected } from '$/errors'
  */
 export interface Button {
     text: string;
-    callback_data: string;
+    callback_data?: string;
     url?: string;
 }
 
@@ -21,7 +21,7 @@ function randomCbName(): string {
 export function Callback(text: string, action: Function | string, ...args: any[] | undefined[]) {
     const bot = INSTANCES[BOT_IDS[0]];
     if (!bot) throw new NoBotSelected("No bot initialized");
-    
+
     let unsigned;
     const strArgs = (args?.length ? (' ' + args?.join(' ')) : ''); // stringified args
 
@@ -42,11 +42,11 @@ export function Callback(text: string, action: Function | string, ...args: any[]
     }
 
     const callback_data = bot.requireSig() ? (bot.sig(unsigned) + ' ' + unsigned) : unsigned;
-    
+
     return {
         text, callback_data
     }
-    
+
     /*const obj = new KeyboardClass(bot, true);
     return obj.Callback(text, action, ...args);*/
 }
@@ -62,7 +62,7 @@ export function Text(text: string) {
  * @param {number} [botId] Bot ID (optional)
  */
 export function Keyboard(botId: number | undefined) {
-    return createKeyboard(botId, false);
+    return createKeyboard(botId, false)
 }
 
 /*
@@ -70,7 +70,7 @@ export function Keyboard(botId: number | undefined) {
  * @param {number} [botId] Bot ID (optional)
  */
 export function Panel(botId: number | undefined) {
-    return createKeyboard(botId, true);
+    return createKeyboard(botId, true)
 }
 
 function createKeyboard(botId: number | undefined, isInline: boolean): KeyboardClass {
@@ -82,9 +82,12 @@ function createKeyboard(botId: number | undefined, isInline: boolean): KeyboardC
 export class KeyboardClass {
     private _service: TelegramBot;
     private _inline: boolean;
-    private keyboard: Button[][]  = [[]];
+    private keyboard: Button[][] = [[]];
+    private _hasOptional: boolean | undefined;
+    private _optionals: Map<number, Function> | undefined;
     private _row = 0;
     private _rollback: boolean | undefined;
+    display: string | Function | undefined;
 
     constructor(service: TelegramBot, isInline: boolean) {
         this._service = service;
@@ -154,7 +157,6 @@ export class KeyboardClass {
                 else {
                     this.keyboard.push(object);
                     this._row++;
-                    //object.forEach(row => { this.keyboard.push([ row ]); this._row++ });
                 }
             }
         }
@@ -173,12 +175,26 @@ export class KeyboardClass {
     }
     
     /*
+     * Optional keyboard part
+     */
+    Optional(func: Function) {
+        if (!this._hasOptional || !this._optionals) {
+            this._optionals = new Map();
+            this._hasOptional = true;
+        }
+        const position = this.keyboard[this._row].length + this._row * 8; // knowing that maximum row size is 8
+        this.keyboard[this._row].push({ text: ' ', ...(this._inline && { callback_data: ' ' }) });
+        this._optionals.set(position, func);
+        return this;
+    }
+
+    /*
      * Action button
      * @param text
      * @param {Function | name} action Function with name OR function name (if it's being registered)
      * @param [args] Arguments (optional)
      */
-    Callback(this: any, text: string, action: Function | string, ...args: any[] | undefined[]) {
+    Callback(text: string, action: Function | string, ...args: any[] | undefined[]) {
         if (this._inline) {
             let unsigned;
             const strArgs = (args?.length ? (' ' + args?.join(' ')) : ''); // stringified args
@@ -208,26 +224,90 @@ export class KeyboardClass {
             return this;
         }
         else {
-            if (this.args.length) throw new Error("Sorry! As for now, reply keyboards can't have arguments")
+            if (args.length) throw new Error("Sorry! As for now, reply keyboards can't have arguments")
 
-            if (!this._service.hasTextCallback(text, action)) {
-                this._service.text(text, action);
+            if (!this._service.hasTextCallback(text)) {
+                const func = typeof action === 'function' ? action : (c: Context) => c.reply(action)
+                this._service.text(text, func);
             }
 
             this.keyboard[this._row].push({
-                text, callback_data: ' '
+                text//, callback_data: ' '
             })
 
             return this;
         }
     }
 
-    Build(): Record<string, any> {
-        if (this._inline) return { inline_keyboard: this.keyboard }
+    async Build(ctx?: Context): Promise<Record<string, any>> {
+        const keyboard = this.keyboard;
+        if (this._hasOptional && this._optionals) {
+            for (const [ id, func ] of this._optionals) {
+                const button = await func(ctx);
+                const row = Math.floor(id / 8)
+                if (button) keyboard[row][id % 8] = button;
+                else keyboard[row].splice(id % 8, 1)
+            }
+        }
+        
+        if (this._inline) return { inline_keyboard: keyboard }
         else return {
-            keyboard: this.keyboard,
+            keyboard,
             ...(!this._rollback && { resize_keyboard: true })
+        }
+    }
+
+    Display(display: string | Function) {
+        this.display = display;
+        return this;
+    }
+
+    async open(ctx: Context, reply?: boolean) {
+        if (!this.display) throw new Error("Tried to open a panel that had no text (add using .Text(...)")
+
+        const text = typeof this.display === 'function' ? await this.display(ctx) : this.display;
+
+        const result = await (reply ? ctx.reply(text, this) : ctx.respond(text, this))
+
+        const opened = new OpenedKeyboard(this, ctx)
+
+        return {
+            ...result,
+            instance: opened
         }
     }
 }
 
+export class OpenedKeyboard {
+    keyboard: KeyboardClass;
+    context: Context;
+    refresher!: any;
+
+    constructor(keyboard: KeyboardClass, ctx: Context) {
+        this.keyboard = keyboard;
+        this.context = ctx;
+    }
+
+    update(seconds: number) {
+        this.refresher = setInterval(async () => {
+            if (!this.keyboard.display) return clearInterval(this.refresher);
+            const display = typeof this.keyboard.display === 'function' ? await this.keyboard.display()
+                                                                        : this.keyboard.display;
+            const result = await this.context.edit(display, this.keyboard)
+            if (!result.ok) {
+                console.warn("Stopped update interval because: " + result.error)
+                clearInterval(this.refresher)
+            }
+        }, seconds * 1000)
+        return this;
+    }
+
+    refresh() {
+        if (!this.keyboard.display) return null;
+        return this.context.edit(this.keyboard.display, this.keyboard)
+    }
+
+    close() {
+        if (this.refresher) clearInterval(this.refresher)
+    }
+}

@@ -18,7 +18,7 @@ const Keyboards: Record<string, PaginationClass> = {};
 /*
  * Handling page open
  */
-function PgO(ctx: Context, id: string, page: number = 0, ...args: any[]): Promise<any> | undefined {
+function PgO(ctx: Context, id: string, page = 0, ...args: any[]): Promise<any> | undefined {
     if (isNaN(page)) return;
 
     const entry = Keyboards[id];
@@ -46,11 +46,11 @@ export class PaginationClass {
     private getText: Function | undefined;
     private getKeyboard: Function | undefined;
     private getAfterKeys: Function | undefined;
-    private back: string = "<";
-    private forth: string = ">";
+    private back = "<";
+    private forth = ">";
     private middle: string | undefined;
-    private page: number = 0;
-    private pageSize: number = 10;
+    private page = 0;
+    private pageSize = 10;
 
     constructor(name: string, bot: TelegramBot) {
         this._service = bot;
@@ -119,7 +119,7 @@ export class PaginationClass {
         return `PgO ${this.id}`;
     }
 
-    async open(ctx: Context, page: number, ...args: any[]) {
+    async open(ctx: Context, page = 0, ...args: any[]) {
         if (!this.getData || !this.getKeyboard) {
             console.warn("Some required keyboard functions was missing");
             return true;

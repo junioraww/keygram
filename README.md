@@ -1,6 +1,6 @@
-<h1 align="center">Keygram</h1>
+<h1 align="center">Keygram [experiment]</h1>
 
-<p align="center"><strong><ins>Experimental</ins> bot library for interactive panels</strong></p>
+<p align="center"><strong>Telegram bot library for interactive panels</strong></p>
 <p align="center">
   <img src="https://img.shields.io/badge/typescript-%23007ACC.svg?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript">
   <img src="https://img.shields.io/badge/Telegram-2CA5E0?style=for-the-badge&logo=telegram&logoColor=white" alt="Telegram">
@@ -11,7 +11,7 @@
 
 ## Introduction
 
-Unlike other libraries for the Telegram Bot API, Keygram provides **wrappers for `callbacks`** to simplify the creation of interactive panels.
+Keygram provides **wrappers for `callbacks`** to simplify the creation of interactive panels.
 Additionaly, future plans include ready-to-use classes for page panels, cached media, and more.
 
 > Tested in <b>[Bun](https://bun.com/)</b> and <b>[Node](https://nodejs.org/en)</b> ecosystems, JavaScript and TypeScript
@@ -71,13 +71,14 @@ bot.startPolling()
 ## 📖 Pagination Example
 Pagination functions can be asynchronous, but the example is the simplest!
 ```js
-import { TelegramBot, Panel, Text, Pagination } from "../";
+import { TelegramBot, Panel, Text, Pagination } from "keygram";
 
-const bot = new TelegramBot(process.argv[2]);
+const bot = new TelegramBot("YOUR_TOKEN");
 
 const data = [1, 2, 3, 4, 5, 6, 7].map(x => ({ number: Math.random() }))
 
-const exampleText = (ctx, data, page) => `Your personal numbers PikiWedia\nYou're on page ${page+1}/${ctx.maxPage}!`
+const exampleText = (ctx, data, page) => "Your personal numbers PikiWedia"
+                                       + `You're on page ${page+1}/${ctx.maxPage}!`
 const exampleData = (ctx, page) => data
 const exampleKeys = (_, numbers, page) => 
     Panel().Add(numbers.map(({ number }) => [ Text("Float " + number.toFixed(4)) ]))
@@ -86,10 +87,8 @@ const close = ctx => ctx.delete()
 const closeKeys = ctx => Panel().Callback("Close panel", close)
 
 const pages = new Pagination("numbers").Text(exampleText)
-                                       .Data(exampleData)
-                                       .Keys(exampleKeys)
-                                       .AfterKeys(closeKeys)
-                                       .PageSize(3)
+              .Data(exampleData).Keys(exampleKeys)
+              .AfterKeys(closeKeys).PageSize(3)
 
 bot.on('/start', ctx => ctx.open(pages));
 

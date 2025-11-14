@@ -8,7 +8,14 @@ const clicked = async (ctx, fox = 1) => {
     const keyboard = Panel().Callback("🦊 New fox", clicked, next)
     const text = "Your foxy, milord! <b>№" + fox + "</b>";
     
-    ctx.respond({ text, ...Image(url), keyboard })
+    const { ok, description } = await ctx.respond({ text, ...Image(url), keyboard })
+    if (!ok) {
+        console.error(description)
+        return clicked;
+    }
+    else return true;
+    // If telegram couldn't get an image, bot will resend the placeholder (fox = 1)
+    // We return true to stop all other middlewares and return 'clicked' to retry this one
 }
 
 bot.on('/start', clicked);

@@ -38,12 +38,12 @@ export interface Handler {
     key?: string; // key to be checked
     value?: any; // key value to be compared
     func: Function;
-    always?: boolean;
 }
 
 export class HandlerManager {
     handlers: Handler[] = [];
-    addedHandlers: Set<string | undefined> = new Set();
+    addedHandlers = new Set<string | undefined>();
+    alwaysUseSet = new Set<Function>();
 
     /*
      * [UNSAFE] 
@@ -71,6 +71,11 @@ export class HandlerManager {
             else this.addHandler('message', func, 'text', getSafeRE(match, false)); // /start, anytext
         }
     }
+    
+    alwaysOn(match: string | RegExp, func: Function) {
+        this.alwaysUseSet.add(func)
+        return this.on(match, func);
+    }
 
     /*
      * [SAFE]
@@ -81,7 +86,7 @@ export class HandlerManager {
         const _update = update.replace(/-/g,'_');
         if (_update.includes(':')) {
             const [ updateName, requiredKey ] = _update.split(':')
-            this.addHandler(cutCbName(_update), func, requiredKey.replace(/-/g,'_'))
+            this.addHandler(cutCbName(updateName), func, requiredKey.replace(/-/g,'_'))
         }
         else this.addHandler(cutCbName(_update), func)
     }
@@ -95,7 +100,7 @@ export class HandlerManager {
     }
 
     /*
-     * Just middleware. No checks applied
+     * Adds just middleware. No checks applied
      */
     use(func: Function) {
         this.handlers.push({
@@ -106,15 +111,11 @@ export class HandlerManager {
     }
 
     /*
-     * This middleware will bypass context state
+     * Middlewares added this way will bypass context state
      */
-    useAlways(func: Function) {
-        this.handlers.push({
-            update: undefined,
-            func,
-            always: true
-        })
-        this.addedHandlers.add(undefined)
+    alwaysUse(func: Function) {
+        this.alwaysUseSet.add(func)
+        return this.use(func);
     }
     
     protected addHandler(update: string, func: Function, key?: string, value?: any) {
@@ -138,7 +139,7 @@ export class HandlerManager {
                     else if (context.update[handler.value] === undefined) continue;
                 }
             }
-            if (!!await handler.func(context)) return true;
+            if (await handler.func(context)) return true;
         }
         return false;
     }
@@ -150,13 +151,13 @@ export class HandlerManager {
     print() {
         return this.handlers.map((h: Handler) => ({
             update: h.update || 'any',
-            ...(h.key && (()=>{let o:any={};o[h.key]=h.value||'any';return o})()),
+            ...(h.key && (()=>{const o:any={};o[h.key]=h.value||'any';return o})()),
             function: h.func.name === "" ? "$" : h.func.name,
         }));
     }
 }
 
-function getSafeRE(str: string, ends: boolean = true) {
+function getSafeRE(str: string, ends = true) {
     return new RegExp(`^${str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}${ends ? '$' : ''}`);
 }
 

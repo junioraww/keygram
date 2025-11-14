@@ -3,11 +3,10 @@ import { INSTANCES, BOT_IDS } from '$/store'
 import { OptionsError } from '$/errors'
 import { StateManager, StateManagerMixin } from '$/mixins/states'
 import { CallbackManager, CallbackSigner } from '$/mixins/callbacks'
-import { ShortcutManager, LimitManager } from '$/mixins/shortcuts'
+import { ShortcutManager, LimitManager, ParserName } from '$/mixins/shortcuts'
 import { HandlerManager, Handler } from '$/mixins/handlers'
 import { MessageSender } from '$/mixins/messages'
 import { Polling } from '$/mixins/polling'
-import { Context } from '$/context'
 
 export interface BotOptions {
     token: string;
@@ -70,13 +69,13 @@ function applyMixins(derivedCtor: any, baseCtors: any[]) {
 }
 
 class ErrorManager {
-    exception: (new (...args: any[]) => Error)[] = [];
+    exception: (new () => Error)[] = [];
 
     /*
-     * Don't throw exception
+     * Disables exception
      * @param {...(new (...args: any[]) => Error)} errors List of exceptions
      */
-    dontThrow(...errors: (new (...args: any[]) => Error)[]) {
+    dontThrow(...errors: (new () => Error)[]) {
         errors.forEach(e => this.exception.push(e));
     }
 
@@ -115,25 +114,27 @@ applyMixins(TelegramBotBase, [
 export class TelegramBot extends TelegramBotBase {
     callbacks: Record<string, Function> = {};
     handlers: Handler[] = [];
-    addedHandlers: Set<string | undefined> = new Set();
-    useAlwaysList: Set<string> = new Set();
+    addedHandlers = new Set<string | undefined>();
+    alwaysUseSet = new Set<Function>();
     allow_override = false;
     mode = 0;
-    parseMode: string | null = null;
-    exception: (new (...args: any[]) => Error)[] = [];
-    signCallbacks = true;
+    exception: (new () => Error)[] = [];
+    signCallbacks = true; // TODO plugin
     signLength = 6;
     started = false;
-    states = new StateManager();
+    states = new StateManager(); // TODO plugin
     cacheRemoverInterval: NodeJS.Timeout | undefined;
-    statesEnabled: boolean = true;
-    limitManager: LimitManager | null = null;
+    statesEnabled: boolean | undefined;
+    limitManager: LimitManager | undefined; // TODO plugin
+    parseMode: ParserName | undefined; // TODO plugin
     id!: number;
 
     constructor(options: BotOptions | string) {
         super();
 
         let token: string;
+        
+        this.statesEnabled = true;
 
         if (typeof options === "string") token = options;
         else {

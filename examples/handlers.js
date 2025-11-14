@@ -36,7 +36,7 @@ bot.use(async ctx => {
 bot.on('photo', ctx => ctx.react("❤"))
 bot.on('voice', ctx => ctx.react("👍"))
 bot.on('message:poll', ctx => ctx.react("👾"))
-bot.on('my_chat_member', ctx => ctx.reply("HAAI everyone!"))
+bot.on('my_chat_member', ctx => ctx.reply("HAAI everynyan!"))
 
 bot.on('/start', onStart);
 
@@ -44,4 +44,5 @@ bot.use(ctx => {
     if (ctx.chat.id > 0) ctx.reply("Unknown message!", Keyboard().Text("/start"))
 })
 
+console.log(bot.print())
 bot.startPolling()

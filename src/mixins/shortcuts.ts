@@ -1,12 +1,12 @@
-import { TelegramBot, MessageOpts, KeyboardClass, Context } from '$'
+import { MessageOpts, KeyboardClass, Context } from '$'
 import { MessageSender } from '$/mixins/messages'
 
-export type ParserName = 'HTML' | 'MarkdownV2' | 'Markdown' | null;
+export type ParserName = 'HTML' | 'MarkdownV2' | 'Markdown' | undefined;
 
 export class LimitManager {
     storeInterval: NodeJS.Timeout | null = null;
     store: Record<number, number> = {};
-    ms: number = 0;
+    ms = 0;
     func: Function | undefined;
 
     constructor(ms: number, func: Function | undefined) {
@@ -49,7 +49,7 @@ export class LimitManager {
 }
 
 export class ShortcutManager extends MessageSender {
-    limitManager: LimitManager | null = null;
+    limitManager: LimitManager | undefined;
 
     async me() {
         const { ok, result } = await (this as any).call('getMe', {})
@@ -77,7 +77,7 @@ export class ShortcutManager extends MessageSender {
         }
 
         if (user_id && user_id < 0) {
-            let intermed = user_id;
+            const intermed = user_id;
             user_id = chat_id;
             chat_id = intermed;
         }
@@ -102,9 +102,9 @@ export class ShortcutManager extends MessageSender {
 
     respond(ctx: Context, argument_1: string | MessageOpts | KeyboardClass, argument_2?: MessageOpts | KeyboardClass) {
         if (!ctx.isCallback) {
-            return ctx.service.identifyReply(ctx.update, argument_1, argument_2)
+            return ctx.service.identifyReply(ctx, argument_1, argument_2)
         }
-        else return ctx.service.identifyEdit(ctx.update, argument_1, argument_2);
+        else return ctx.service.identifyEdit(ctx, argument_1, argument_2);
     }
 
     /*

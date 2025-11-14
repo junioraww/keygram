@@ -2,7 +2,7 @@ export class StateManagerMixin {
     states: StateManager = new StateManager();
     cacheRemoverInterval: NodeJS.Timeout | undefined;
 
-    _startStateCacheRemover(intervalMs: number = 1000): void {
+    _startStateCacheRemover(intervalMs = 1000): void {
         if (this.cacheRemoverInterval) {
             this._stopCacheRemover();
         }
@@ -46,9 +46,9 @@ interface StateEntry {
 
 export class StateManager {
     cache: Record<number, StateEntry> = {};
-    unloadAfter: number = 60;
-    maxSize: number = 100;
-    size: number = 0;
+    unloadAfter = 60;
+    maxSize = 100;
+    size = 0;
 
     setUnloadAfter(seconds: number) {
         this.unloadAfter = seconds;

@@ -16,17 +16,21 @@ export class CallbackManager {
      */
     register(...fs: Function[]) {
         for (const func of fs) {
-            if (this.started && func.name === "anon")
-                throw new NamelessCallback("Can't register anon function outside Keyboard()");
+            if (this.started && func.name === "anon") {
+                const error = new NamelessCallback("Can't register anon function outside Keyboard()");
+                if ((this as any).shouldThrow(error)) throw error;
+            }
 
-            if (!this.allow_override && this.callbacks[func.name])
-                throw new CallbackOverride("Callback with name " + func.name + " already registered!");
+            if (!this.allow_override && this.callbacks[func.name]) {
+                const error = new CallbackOverride("Callback with name " + func.name + " already registered!");
+                if ((this as any).shouldThrow(error)) throw error;
+            }
 
             this.callbacks[func.name] = func;
         }
     }
 
-    protected registerAnon(cb_name: string, func: Function) {
+    registerAnon(cb_name: string, func: Function) {
         this.callbacks[cb_name] = func;
     }
 
@@ -34,12 +38,12 @@ export class CallbackManager {
         return !!this.callbacks[func.name];
     }
 
-    hasTextCallback(text: string, func: Function) {
+    hasTextCallback(text: string) {
         return (this as any).handlers.findIndex((h: any) => h.update === "message"
                                              && h.key === "text"
                                              && h.value === text) !== -1
     }
-    
+
     getCallbackData(data: string) {
         if (this!.signCallbacks) return tinySig(data + this.token, this!.signLength) + ' ' + data;
         return data;
@@ -88,8 +92,4 @@ export class CallbackSigner {
 function tinySig(text: string, signLength: number): string {
     const hash = createHash("sha256").update(text, "utf8").digest();
     return hash.toString("base64").substring(0, signLength);
-}
-
-function cutCbName(update: string) {
-    return update === 'callback' ? 'callback_query' : update;
 }

@@ -2,7 +2,7 @@ import { TelegramBot, KeyboardClass, MessageOpts, PaginationClass } from '$'
 
 export class Context {
     public readonly event: string;
-    private readonly _update: any;
+    private _update: any;
     private readonly _service: TelegramBot;
 
     private _state: Record<string, any> | undefined  = undefined;
@@ -20,7 +20,7 @@ export class Context {
 
     /*
      * UNSAFE!
-     * Sets state without checking result
+     * Sets state without verifying result
      */
     set state(new_state: Record<string, any>) {
         this._state = new_state;
@@ -28,7 +28,7 @@ export class Context {
     }
 
     /*
-     * If you need to check database response use this
+     * Sets state returning set function (useful in prod to catch db errors)
      */ 
     async setState(new_state: Record<string, any>) {
         this._state = new_state;
@@ -64,7 +64,7 @@ export class Context {
      * Returns type of message (text, photo, video, callback_query, etc)
      */
     get type(): string | undefined {
-        const msg = this._update.message || this._update;
+        const msg = this.update.message || this.update;
 
         if (!msg) return undefined;
 
@@ -91,15 +91,31 @@ export class Context {
     }
 
     get chat(): { id: number; [key: string]: any } | undefined {
-        return this.update.chat || this._update.message?.chat;
+        return this.update.chat || this.update.message?.chat;
     }
 
     get from(): { id: number; [key: string]: any } | undefined {
-        return this._update.from;
+        return this.update.from;
     }
 
-    get message_id(): number | undefined {
+    /*get message_id(): number | undefined {
+        return this.msgId();
+    }*/
+    
+    get msgId(): number | undefined {
         return this.update.message_id || this.update.message?.message_id;
+    }
+
+    /*
+     * Changes current update context (e.g ctx.message = ctx.reply("Hello world"))
+     * @throws {Error} If function passed
+     */
+    set message(update: Record<string, any>) {
+        if (update.ok !== undefined) { // if used like ctx.message = await ...
+            if (!update.ok) throw new Error(update.error)
+            this._update = update.result;
+        }
+        else this._update = update;
     }
 
     get data(): string | undefined {
@@ -113,7 +129,7 @@ export class Context {
     }
 
     reply(argument_1: string | MessageOpts, argument_2?: MessageOpts | KeyboardClass) {
-        return this.service.identifyReply(this.update, argument_1, argument_2);
+        return this.service.identifyReply(this, argument_1, argument_2);
     }
 
     edit(argument1: string | MessageOpts | KeyboardClass, argument2?: MessageOpts | KeyboardClass) {
@@ -121,7 +137,7 @@ export class Context {
             console.warn('[Context] .edit() can be used in callbacks only');
             return;
         }
-        return this.service.identifyEdit(this.update, argument1, argument2);
+        return this.service.identifyEdit(this, argument1, argument2);
     }
 
     respond(argument1: string | MessageOpts | KeyboardClass, argument2?: MessageOpts | KeyboardClass) {
@@ -147,7 +163,7 @@ export class Context {
         }
 
         const chatId = this.chat?.id;
-        const messageId = this.message_id;
+        const messageId = this.msgId;
 
         if (!chatId || !messageId) {
              console.warn('[Context] .react() couldn\'t find chat.id or message_id');
@@ -156,28 +172,33 @@ export class Context {
 
         return this.service.react(chatId, messageId, emoji, big);
     }
-    
+
     async delete() {
         if (!this.isCallback) {
             console.warn('[Context] .delete() can be used in callbacks only');
             return;
         }
-        
+
         const chat_id = this.chat?.id;
-        const message_id = this.message_id;
+        const message_id = this.msgId;
         if (!chat_id || !message_id) return;
-        
+
         return this.service.call('deleteMessage', { message_id, chat_id })
     }
-    
+
     async call(method: string, params?: Record<string, any>) {
         const chat_id = this.chat?.id;
-        
-        const body = {
-            ...(chat_id && { chat_id }),
-            ...params
+
+        const body: Record<string, any> = {
+            ...(chat_id && { chat_id })
         }
-        
+
+        if ((this as any).bot.parse_mode !== undefined) {
+            if (methodsToIncludeParseMode.has(method)) body.parse_mode = (this as any).bot.parse_mode;
+        }
+
+        for (const p in params) body[p] = params[p];
+
         return this.service.call(method, body);
     }
 
@@ -186,11 +207,11 @@ export class Context {
     }
 
     get isGroup(): boolean {
-        return (this._update.message || this._update).chat.id < 0;
+        return (this.update.message || this.update).chat.id < 0;
     }
 
     async input(func: string | Function, allowed?: string | string[]) {
-        if (!func) throw new Error("No function specified after input is done!")
+        if (!func) throw new Error("No function specified to be handled after an input is done!")
         else if (!(this as any).service.hasCallback(func)) throw new Error("Function must be registered! " + func)
         return this.setState({
             ...this.state,
@@ -203,8 +224,17 @@ export class Context {
         return await this.setState({})
     }
 
-    async open(clss: PaginationClass | null, page: number = 0, ...args: any[]) {
-        if (clss instanceof PaginationClass) return await clss.open(this, page, ...args)
-        else return null
+    async open(clss: PaginationClass | KeyboardClass, ...args: any[]) {
+        if (clss instanceof PaginationClass) return await clss.open(this, args[0] || 0, ...args.slice(1))
+        else if (clss instanceof KeyboardClass) return await clss.open(this, args[0])
     }
 }
+
+const methodsToIncludeParseMode = new Set([
+  "sendMessage", "copyMessage", "sendPhoto", "sendAudio", "sendDocument",
+  "sendVideo", "sendAnimation", "sendVoice", "sendVideoNote", "sendPaidMedia", 
+  "sendMediaGroup", "postStory", "editStory",
+  "editMessageText", "editMessageCaption"
+])
+
+// TODO handle methods with different parse_mode names (e.g quote_parse_mode)
