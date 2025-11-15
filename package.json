@@ -1,6 +1,6 @@
 {
   "name": "keygram",
-  "version": "0.2.10",
+  "version": "0.2.11",
   "author": "junioraww",
   "repository": {
     "type": "git",
@@ -11,6 +11,7 @@
     "@types/bun": "^1.3.1",
     "eslint": "^9.38.0",
     "prettier": "^3.6.2",
+    "tsup": "^8.5.1",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.46.3"
   },
@@ -23,7 +24,7 @@
   ],
   "license": "MIT",
   "scripts": {
-    "build": "tsc",
+    "build": "tsup src/index.ts --format esm --dts",
     "lint": "eslint src --ext .ts",
     "format": "prettier --write ."
   },

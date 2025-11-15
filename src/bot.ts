@@ -123,11 +123,11 @@ export class TelegramBot extends TelegramBotBase {
     signLength = 6;
     started = false;
     states = new StateManager(); // TODO plugin
-    cacheRemoverInterval: NodeJS.Timeout | undefined;
-    statesEnabled: boolean | undefined;
-    limitManager: LimitManager | undefined; // TODO plugin
-    parseMode: ParserName | undefined; // TODO plugin
-    id!: number;
+    declare cacheRemoverInterval: NodeJS.Timeout | undefined;
+    declare statesEnabled: boolean | undefined;
+    declare limitManager: LimitManager | undefined; // TODO plugin
+    declare parseMode: ParserName | undefined; // TODO plugin
+    declare id: number;
 
     constructor(options: BotOptions | string) {
         super();
